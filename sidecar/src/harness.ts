@@ -11,19 +11,16 @@ import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import {
 	type ConversationRecord,
 	createRegistry,
-	defineExtension,
 	type Harness as HarnessType,
 	Harness,
 	type ModelRef,
-	section,
 } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
-import { CodingTools } from "@earendil-works/pi-durable/tools";
 import type { Config } from "./config.ts";
 import { log } from "./log.ts";
 import { assertKnownModel } from "./models-check.ts";
-import { createLookupRecordTool } from "./tools/lookup-record.ts";
+import { RailsTools } from "./tools.ts";
 
 export type HarnessCallbacks = {
 	/** Runs inside the creating commit; must not do async work against the Harness. Queue and act after. */
@@ -36,6 +33,7 @@ export type OpenedHarness = {
 	readonly harness: HarnessType;
 	readonly models: MutableModels;
 	readonly model: ModelRef;
+	readonly tools: RailsTools;
 	close(context: Context): Promise<void>;
 };
 
@@ -65,34 +63,22 @@ export async function openHarness(
 	await mkdir(dirname(config.storagePath), { recursive: true });
 	await mkdir(config.workspaceRoot, { recursive: true });
 
-	const model: ModelRef = config.model.provider === "faux" ? { provider: "faux", modelId: "faux-1" } : config.model;
-	// A wrong default model must not take the service down: existing conversations keep their own model and can be
-	// reconfigured. New conversations and agent changes are rejected with 422 until the default is fixed.
+	const model = config.model;
+	// A wrong default model must not take the service down: existing conversations keep their own model. New
+	// conversations without an explicit model are rejected with 422 until the default is fixed.
 	try {
 		assertKnownModel(models, model);
 	} catch (error) {
-		log.error("default model is unknown; fix MODEL_ID and restart", { error });
+		log.error("default model is unknown; fix DURABLE_AGENT_MODEL and restart", { error });
 	}
 	const auth = await models.checkAuth(model.provider).catch(() => undefined);
 	if (model.provider !== "faux" && auth === undefined) {
-		log.warn("default provider has no credentials; runs fail until someone signs in", { provider: model.provider });
+		log.warn("default provider has no credentials; runs settle unanswered until someone signs in", { provider: model.provider });
 	}
 
 	const registry = createRegistry();
-	registry.install(
-		defineExtension({
-			name: "app",
-			sections: [
-				section(
-					"preamble",
-					() => "You are the assistant inside this application. Be concise and act through the tools you are given.",
-					{ tag: false },
-				),
-			],
-			tools: config.railsUrl === undefined ? [] : [createLookupRecordTool(config.railsUrl, config.token)],
-		}),
-	);
-	if (config.enableCodingTools) registry.install(CodingTools);
+	const tools = new RailsTools(registry, config.railsUrl, config.token);
+	await tools.load();
 
 	const storage = await openNodeSqliteStorage(config.storagePath);
 	const harness = await Harness.open(
@@ -107,5 +93,5 @@ export async function openHarness(
 		context,
 	);
 
-	return { harness, models, model, close: (ctx) => harness.close(ctx) };
+	return { harness, models, model, tools, close: (ctx) => harness.close(ctx) };
 }

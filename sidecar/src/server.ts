@@ -1,60 +1,65 @@
-// The internal HTTP API Rails calls. Commands only: Rails never asks the sidecar for state it can read from the
-// mirror tables, except the debug endpoints (GET view, SSE events), which exist for development and operators.
+// The HTTP API v1 Rails calls (DESIGN.md, "Sidecar HTTP API v1"). Commands only: Rails reads agent state from the
+// mirror tables, never from here. Anything not listed below is a 404.
 import type { Context as PiContext } from "@earendil-works/chord/context";
+import type { Models } from "@earendil-works/pi-ai";
 import {
-	type AgentChange,
 	ConversationBusy,
 	type ConversationId,
 	type Harness,
+	type InputSubmissionDraft,
 	type ModelRef,
-	type SubmissionDraft,
-	type SubmissionId,
-	type TaskId,
-	watchEvents,
 } from "@earendil-works/pi-durable";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
-import { streamSSE } from "hono/streaming";
-import type { Models } from "@earendil-works/pi-ai";
 import type { Logins } from "./auth.ts";
+import { parseModel } from "./config.ts";
+import { SCHEMA_VERSION } from "./credentials.ts";
 import type { Mirror } from "./mirror.ts";
 import { assertKnownModel, UnknownModel } from "./models-check.ts";
-
-type InputDraft = Extract<SubmissionDraft, { type: "input" }>;
-type WriteDraft = Extract<SubmissionDraft, { type: "write" }>;
+import type { RailsTools } from "./tools.ts";
 
 export type ServerDeps = {
 	readonly harness: Harness;
 	readonly models: Models;
 	readonly mirror: Mirror;
 	readonly logins: Logins;
+	readonly tools: RailsTools;
 	readonly token: string;
 	readonly defaultModel: ModelRef;
 	readonly context: PiContext;
 };
 
-const id = <T extends number>(raw: string | undefined, what: string): T => {
-	const value = Number(raw);
-	if (!Number.isInteger(value) || value <= 0) throw new HTTPException(400, { message: `invalid ${what} id` });
-	return value as T;
+const WHEN_BUSY = ["followUp", "steer", "reject"] as const;
+type WhenBusy = (typeof WHEN_BUSY)[number];
+
+const badRequest = (message: string): HTTPException => new HTTPException(400, { message });
+
+const isObject = (value: unknown): value is Record<string, unknown> =>
+	typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** Missing or malformed JSON bodies read as `{}`; every route validates the fields it needs. */
+const body = async (request: Request): Promise<Record<string, unknown>> => {
+	const parsed: unknown = await request.json().catch(() => ({}));
+	return isObject(parsed) ? parsed : {};
 };
 
-const agentChange = (body: Record<string, unknown>, models: Models): AgentChange => {
-	const change: Record<string, unknown> = {};
-	for (const key of ["model", "thinkingLevel", "instructions", "cwd"] as const) {
-		if (key in body) change[key] = body[key];
-	}
-	const model = change.model as ModelRef | null | undefined;
-	if (model !== undefined && model !== null) {
-		if (typeof model.provider !== "string" || typeof model.modelId !== "string") {
-			throw new HTTPException(400, { message: "model must be {provider, modelId}" });
+/** `{provider, modelId}` per the contract; a `provider/modelId` string is accepted too, as the env var spells it. */
+const modelRef = (value: unknown): ModelRef | undefined => {
+	if (value === undefined || value === null) return undefined;
+	if (typeof value === "string") {
+		try {
+			return parseModel(value);
+		} catch {
+			throw badRequest("model must be {provider, modelId}");
 		}
-		assertKnownModel(models, model);
 	}
-	return change as AgentChange;
+	if (isObject(value) && typeof value.provider === "string" && typeof value.modelId === "string") {
+		return { provider: value.provider, modelId: value.modelId };
+	}
+	throw badRequest("model must be {provider, modelId}");
 };
 
-export function createServer({ harness, models, mirror, logins, token, defaultModel, context }: ServerDeps) {
+export function createServer({ harness, models, mirror, logins, tools, token, defaultModel, context }: ServerDeps) {
 	const app = new Hono();
 
 	app.use("*", async (c, next) => {
@@ -63,77 +68,65 @@ export function createServer({ harness, models, mirror, logins, token, defaultMo
 		return next();
 	});
 
+	app.notFound((c) => c.json({ error: "not_found" }, 404));
+
 	app.onError((error, c) => {
-		if (error instanceof HTTPException) return error.getResponse();
+		if (error instanceof HTTPException) return c.json({ error: error.message }, error.status);
 		if (error instanceof ConversationBusy) return c.json({ error: "conversation_busy" }, 409);
 		if (error instanceof UnknownModel) return c.json({ error: error.message, suggestions: error.suggestions }, 422);
 		return c.json({ error: error instanceof Error ? error.message : String(error) }, 500);
 	});
 
-	const conversation = async (raw: string | undefined) => {
-		const found = await harness.conversation(id<ConversationId>(raw, "conversation"), context);
+	const conversation = async (raw: string) => {
+		const id = Number(raw);
+		const found = Number.isInteger(id) && id > 0 ? await harness.conversation(id as ConversationId, context) : undefined;
 		if (found === undefined) throw new HTTPException(404, { message: "conversation not found" });
 		return found;
 	};
 
-	app.get("/health", (c) => c.json({ ok: true }));
+	app.get("/health", (c) => c.json({ ok: true, schemaVersion: SCHEMA_VERSION, model: defaultModel }));
 
 	// Conversations -------------------------------------------------------------------------------------------------
 
 	app.post("/conversations", async (c) => {
-		const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
-		const change = agentChange(body, models);
+		const input = await body(c.req.raw);
+		const model = modelRef(input.model) ?? defaultModel;
+		assertKnownModel(models, model);
+		if (input.instructions !== undefined && input.instructions !== null && typeof input.instructions !== "string") {
+			throw badRequest("instructions must be a string");
+		}
+		const instructions = typeof input.instructions === "string" ? input.instructions : undefined;
 		const created = await harness.createConversation(
-			{ ownership: { kind: "ownerless" }, agent: { model: defaultModel, ...change } },
+			{ ownership: { kind: "ownerless" }, agent: { model, ...(instructions === undefined ? {} : { instructions }) } },
 			context,
 		);
 		await mirror.attach(created.id);
 		return c.json({ id: created.id }, 201);
 	});
 
-	app.get("/conversations/:id", async (c) => {
-		const found = await conversation(c.req.param("id"));
-		const view = await found.viewState(context);
-		try {
-			return c.json({ view: view.value, agent: await found.agent(context) });
-		} finally {
-			view.dispose();
-		}
-	});
-
-	app.patch("/conversations/:id/agent", async (c) => {
-		const found = await conversation(c.req.param("id"));
-		await found.configure(agentChange((await c.req.json()) as Record<string, unknown>, models), context);
-		return c.json({ agent: await found.agent(context) });
-	});
-
 	app.post("/conversations/:id/submissions", async (c) => {
 		const found = await conversation(c.req.param("id"));
-		const body = (await c.req.json()) as {
-			content?: unknown;
-			request_id?: string;
-			when_busy?: "steer" | "followUp" | "reject";
-			entry?: { kind: string; data?: unknown };
-			write?: { kind: string; data?: unknown };
-		};
-		let draft: SubmissionDraft;
-		if (body.write !== undefined) {
-			draft = { type: "write", requestId: body.request_id, entry: body.write as WriteDraft["entry"] };
-		} else {
-			if (typeof body.content !== "string" && !Array.isArray(body.content)) {
-				throw new HTTPException(400, { message: "content must be a string or content blocks" });
-			}
-			draft = {
-				type: "input",
-				requestId: body.request_id,
-				content: body.content as InputDraft["content"],
-				whenBusy: body.when_busy,
-				entry: body.entry as InputDraft["entry"],
-			};
+		const input = await body(c.req.raw);
+		if (typeof input.content !== "string" && !Array.isArray(input.content)) {
+			throw badRequest("content must be a string or content blocks");
 		}
+		const requestId = typeof input.request_id === "number" ? String(input.request_id) : input.request_id;
+		if (typeof requestId !== "string" || requestId === "") throw badRequest("request_id is required");
+		const whenBusy = input.when_busy ?? undefined;
+		if (whenBusy !== undefined && !WHEN_BUSY.includes(whenBusy as WhenBusy)) {
+			throw badRequest(`when_busy must be one of ${WHEN_BUSY.join(", ")}`);
+		}
+		const draft: InputSubmissionDraft = {
+			type: "input",
+			requestId,
+			content: input.content as InputSubmissionDraft["content"],
+			...(whenBusy === undefined ? {} : { whenBusy: whenBusy as WhenBusy }),
+		};
+		// Idempotent: the Harness returns the existing submission for a request id it has seen.
 		const submission = await found.submit(draft, context);
 		mirror.track(submission, found, draft);
-		return c.json({ id: submission.id, status: await submission.status(context) }, 202);
+		const record = await submission.status(context);
+		return c.json({ id: submission.id, status: record.status }, 202);
 	});
 
 	app.post("/conversations/:id/abort", async (c) => {
@@ -141,65 +134,6 @@ export function createServer({ harness, models, mirror, logins, token, defaultMo
 		await found.abort(context);
 		return c.json({ ok: true });
 	});
-
-	app.post("/conversations/:id/reset", async (c) => {
-		const found = await conversation(c.req.param("id"));
-		const body = (await c.req.json().catch(() => ({}))) as { handoff?: string };
-		await found.reset(body.handoff, context);
-		return c.json({ ok: true });
-	});
-
-	app.post("/conversations/:id/compact", async (c) => {
-		const found = await conversation(c.req.param("id"));
-		const body = (await c.req.json().catch(() => ({}))) as { instructions?: string };
-		const taskId = await found.compact(body.instructions, context);
-		return c.json({ task_id: taskId }, 202);
-	});
-
-	// Debug stream: the experimental agent events, as server-sent events. Rails relays through ActionCable in
-	// production; this is for development, operators, and tests.
-	app.get("/conversations/:id/events", async (c) => {
-		const found = await conversation(c.req.param("id"));
-		const stream = await watchEvents(harness, found.id, context);
-		return streamSSE(c, async (sse) => {
-			await sse.writeSSE({ event: "snapshot", data: JSON.stringify(stream.snapshot) });
-			let closed = false;
-			sse.onAbort(() => {
-				closed = true;
-				void stream.stop();
-			});
-			stream.start(async (events) => {
-				for (const event of events) await sse.writeSSE({ event: event.type, data: JSON.stringify(event) });
-			});
-			await stream.closed;
-			if (!closed) await sse.close();
-		});
-	});
-
-	// Submissions ---------------------------------------------------------------------------------------------------
-
-	app.get("/submissions/:id", async (c) => {
-		const submission = await harness.submission(id<SubmissionId>(c.req.param("id"), "submission"), context);
-		if (submission === undefined) throw new HTTPException(404, { message: "submission not found" });
-		return c.json(await submission.status(context));
-	});
-
-	app.delete("/submissions/:id", async (c) => {
-		const result = await harness.abortSubmission(id<SubmissionId>(c.req.param("id"), "submission"), context);
-		if (result === "not_found") throw new HTTPException(404, { message: "submission not found" });
-		return c.json({ result });
-	});
-
-	// Tasks and operations -------------------------------------------------------------------------------------------
-
-	app.get("/tasks", async (c) => c.json(await harness.inspect(context)));
-
-	app.post("/tasks/:id/abort", async (c) => {
-		const result = await harness.abortTask(id<TaskId>(c.req.param("id"), "task"), context);
-		return c.json({ result });
-	});
-
-	app.get("/usage", async (c) => c.json(await harness.usage(context)));
 
 	// Provider sign-in -----------------------------------------------------------------------------------------------
 	// Sign in with ChatGPT and the other OAuth flows are interactive; Rails drives them through these routes. The
@@ -220,9 +154,9 @@ export function createServer({ harness, models, mirror, logins, token, defaultMo
 	});
 
 	app.post("/auth/:provider/logins/:id/callback", async (c) => {
-		const body = (await c.req.json()) as { url?: string };
-		if (typeof body.url !== "string") throw new HTTPException(400, { message: "url is required" });
-		const login = logins.complete(c.req.param("id"), body.url);
+		const input = await body(c.req.raw);
+		if (typeof input.url !== "string") throw badRequest("url is required");
+		const login = logins.complete(c.req.param("id"), input.url);
 		if (login === undefined) throw new HTTPException(404, { message: "login not found" });
 		return c.json(login);
 	});
@@ -236,6 +170,17 @@ export function createServer({ harness, models, mirror, logins, token, defaultMo
 	app.delete("/auth/:provider", async (c) => {
 		await logins.logout(c.req.param("provider"));
 		return c.json({ ok: true });
+	});
+
+	// Tools ----------------------------------------------------------------------------------------------------------
+
+	app.post("/tools/reload", async (c) => {
+		try {
+			return c.json({ tools: await tools.reload() });
+		} catch (error) {
+			// The previous tool set stays installed.
+			throw new HTTPException(502, { message: `could not fetch tool definitions: ${error instanceof Error ? error.message : String(error)}` });
+		}
 	});
 
 	return app;

@@ -1,0 +1,26 @@
+answered:
+  id: 900401
+  conversation_id: 900001
+  request_id: message-1
+  type: input
+  status: done
+  entry_id: 900101
+  answer_entry_id: 900104
+
+unanswered_before_answer:
+  id: 900402
+  conversation_id: 900003
+  request_id: message-2
+  type: input
+  status: unanswered
+  reason: run_failed
+  entry_id: 900300
+
+unanswered:
+  id: 900403
+  conversation_id: 900003
+  request_id: message-3
+  type: input
+  status: unanswered
+  reason: no_model
+  entry_id: 900302

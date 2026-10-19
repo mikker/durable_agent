@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import type pg from "pg";
-import { installationDeviceId, PostgresCredentialStore } from "../src/credentials.ts";
+import { installationDeviceId, PostgresCredentialStore, recordSchemaVersion } from "../src/credentials.ts";
 import { testPool } from "./helpers.ts";
 
 let pool: pg.Pool;
@@ -41,4 +41,13 @@ test("the installation device id is created once and then stable", async () => {
 	const second = await installationDeviceId(pool);
 	assert.match(first, /^[0-9a-f-]{36}$/);
 	assert.equal(first, second);
+});
+
+test("the schema version row is written once and never overwritten", async () => {
+	await recordSchemaVersion(pool);
+	await pool.query("UPDATE durable_agent_settings SET value = '7' WHERE key = 'schema_version'");
+	await recordSchemaVersion(pool);
+	const result = await pool.query<{ value: string }>("SELECT value FROM durable_agent_settings WHERE key = 'schema_version'");
+	assert.equal(result.rows[0]?.value, "7");
+	await pool.query("UPDATE durable_agent_settings SET value = '1' WHERE key = 'schema_version'");
 });

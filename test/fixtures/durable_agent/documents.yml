@@ -1,0 +1,31 @@
+idle_live:
+  conversation_id: 900001
+  kind: pi.live
+  body: {}
+
+busy_live:
+  conversation_id: 900002
+  kind: pi.live
+  body:
+    run:
+      taskId: 42
+      inputs: [ 7 ]
+    generation:
+      attempt: 1
+      message:
+        role: assistant
+        content:
+          - type: text
+            text: "Roses are red"
+    tools:
+      - callId: call-9
+        name: lookup_invoice
+        status: running
+
+busy_inbox:
+  conversation_id: 900002
+  kind: pi.inbox
+  body:
+    items:
+      - id: 8
+        type: input

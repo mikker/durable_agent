@@ -1,0 +1,9 @@
+# High ids so the real sidecar, which numbers from 1, never collides in the round-trip test.
+idle:
+  id: 900001
+
+busy:
+  id: 900002
+
+failed:
+  id: 900003

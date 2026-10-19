@@ -10,8 +10,9 @@
   "scripts": {
     "dev": "node --watch --env-file-if-exists=.env src/main.ts",
     "start": "node --env-file-if-exists=.env src/main.ts",
+    "build": "esbuild src/main.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/sidecar.js --legal-comments=none \"--banner:js=import { createRequire as __durableAgentCreateRequire } from 'node:module'; const require = __durableAgentCreateRequire(import.meta.url);\"",
     "typecheck": "tsc --noEmit",
-    "test": "node --test test/",
+    "test": "node --test --test-concurrency=1 test/",
     "db:schema": "psql \"$DATABASE_URL\" -f sql/schema.sql"
   },
   "dependencies": {
@@ -25,6 +26,7 @@
   "devDependencies": {
     "@types/node": "^22.15.0",
     "@types/pg": "^8.11.0",
+    "esbuild": "0.28.2",
     "typescript": "^5.8.0"
   }
 }

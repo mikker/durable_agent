@@ -31,7 +31,7 @@ export class PostgresCredentialStore implements CredentialStore {
 	async read(providerId: string, options?: AuthOperationOptions): Promise<Credential | undefined> {
 		options?.signal?.throwIfAborted();
 		const result = await this.#pool.query<{ credential: Credential }>(
-			"SELECT credential FROM agent_credentials WHERE provider_id = $1",
+			"SELECT credential FROM durable_agent_credentials WHERE provider_id = $1",
 			[providerId],
 		);
 		return result.rows[0]?.credential;
@@ -40,7 +40,7 @@ export class PostgresCredentialStore implements CredentialStore {
 	async list(options?: AuthOperationOptions): Promise<readonly CredentialInfo[]> {
 		options?.signal?.throwIfAborted();
 		const result = await this.#pool.query<{ provider_id: string; type: Credential["type"] }>(
-			"SELECT provider_id, credential->>'type' AS type FROM agent_credentials ORDER BY provider_id",
+			"SELECT provider_id, credential->>'type' AS type FROM durable_agent_credentials ORDER BY provider_id",
 		);
 		return result.rows.map((row) => ({ providerId: row.provider_id, type: row.type }));
 	}
@@ -58,7 +58,7 @@ export class PostgresCredentialStore implements CredentialStore {
 				options?.signal?.throwIfAborted();
 				if (next !== undefined) {
 					await this.#pool.query(
-						`INSERT INTO agent_credentials (provider_id, credential) VALUES ($1, $2)
+						`INSERT INTO durable_agent_credentials (provider_id, credential) VALUES ($1, $2)
 						 ON CONFLICT (provider_id) DO UPDATE SET credential = EXCLUDED.credential, updated_at = now()`,
 						[providerId, JSON.stringify(next)],
 					);
@@ -73,7 +73,7 @@ export class PostgresCredentialStore implements CredentialStore {
 		return this.#serialize(
 			providerId,
 			async () => {
-				await this.#pool.query("DELETE FROM agent_credentials WHERE provider_id = $1", [providerId]);
+				await this.#pool.query("DELETE FROM durable_agent_credentials WHERE provider_id = $1", [providerId]);
 			},
 			options,
 		);
@@ -83,11 +83,22 @@ export class PostgresCredentialStore implements CredentialStore {
 /** The stable UUID OpenAI identifies this installation by. Created on first use, then constant. */
 export async function installationDeviceId(pool: Pool): Promise<string> {
 	const inserted = await pool.query<{ value: string }>(
-		`INSERT INTO agent_settings (key, value) VALUES ('device_id', $1)
-		 ON CONFLICT (key) DO UPDATE SET value = agent_settings.value RETURNING value`,
+		`INSERT INTO durable_agent_settings (key, value) VALUES ('device_id', $1)
+		 ON CONFLICT (key) DO UPDATE SET value = durable_agent_settings.value RETURNING value`,
 		[randomUUID()],
 	);
 	const value = inserted.rows[0]?.value;
 	if (value === undefined) throw new Error("could not read or create the installation device id");
 	return value;
+}
+
+/** The mirror schema this sidecar writes. Rails' migration creates the same tables; both record version 1. */
+export const SCHEMA_VERSION = 1;
+
+/** Record the schema version, leaving a value Rails (or an earlier boot) wrote alone. */
+export async function recordSchemaVersion(pool: Pool): Promise<void> {
+	await pool.query(
+		`INSERT INTO durable_agent_settings (key, value) VALUES ('schema_version', $1) ON CONFLICT (key) DO NOTHING`,
+		[String(SCHEMA_VERSION)],
+	);
 }

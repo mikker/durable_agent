@@ -1,0 +1,21 @@
+DurableAgent.configure do |config|
+  # "provider/modelId". "faux/faux-1" runs a scripted offline model, handy in development and CI.
+  config.model = "openai/gpt-6.1-sol"
+
+  # Tools are DurableAgent::Tool subclasses. Give their names as strings so code reloading keeps working.
+  # config.tools = %w[ LookupInvoice ]
+
+  # Where the sidecar listens, and where it reaches this app for tools.
+  # config.host = "127.0.0.1"
+  # config.port = 4010
+  # config.rails_url = "http://127.0.0.1:3000"
+
+  # The shared secret. Defaults to credentials.durable_agent.token, then ENV["DURABLE_AGENT_TOKEN"], and in
+  # development and test to a value derived from secret_key_base.
+  # config.token = "..."
+
+  # Called by the relay (bin/rails durable_agent:relay) after each mirrored frame. The default refreshes
+  # every page subscribed with `turbo_stream_from conversation`.
+  # config.on_mirror = ->(conversation, entries:, docs:, submission:) { Turbo::StreamsChannel.broadcast_refresh_to(conversation) }
+  # config.on_report = ->(report) { Rails.logger.warn(report.message) }
+end

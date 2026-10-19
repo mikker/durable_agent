@@ -1,6 +1,6 @@
 // Mirror-to-Postgres: the sidecar is the only writer of agent state, Rails only reads it. Every committed frame of a
-// conversation's view (new entries, changed documents) lands in the agent_* tables, followed by a NOTIFY so Rails can
-// broadcast a Turbo Stream or wake a job without polling.
+// conversation's view (new entries, changed documents) lands in the durable_agent_* tables, followed by a
+// NOTIFY on durable_agent_mirror so the Rails relay can broadcast a Turbo refresh without polling.
 //
 // Entries are immutable and globally identified, so they are inserted once with ON CONFLICT DO NOTHING. Documents are
 // upserted whole whenever their JSON changes. A failed write drops the in-memory bookkeeping, so the next frame
@@ -23,7 +23,7 @@ import type { Pool, PoolClient } from "pg";
 import type { Config } from "./config.ts";
 import { log } from "./log.ts";
 
-export const MIRROR_CHANNEL = "agent_mirror";
+export const MIRROR_CHANNEL = "durable_agent_mirror";
 
 type Attached = {
 	readonly stop: () => Promise<unknown>;
@@ -100,7 +100,7 @@ export class Mirror {
 		this.#attached.set(id, attached);
 
 		await this.#upsertConversation(watch.value.conversation);
-		const seeded = await this.#pool.query<{ id: string }>("SELECT id FROM agent_entries WHERE conversation_id = $1", [id]);
+		const seeded = await this.#pool.query<{ id: string }>("SELECT id FROM durable_agent_entries WHERE conversation_id = $1", [id]);
 		for (const row of seeded.rows) attached.seenEntries.add(Number(row.id));
 
 		await this.#writeFrame(id, attached, watch.value);
@@ -115,7 +115,7 @@ export class Mirror {
 	track(submission: Submission, conversation: Conversation, draft: SubmissionDraft): void {
 		void this.#pool
 			.query(
-				`INSERT INTO agent_submissions (id, conversation_id, request_id, type, status)
+				`INSERT INTO durable_agent_submissions (id, conversation_id, request_id, type, status)
 				 VALUES ($1, $2, $3, $4, 'queued') ON CONFLICT (id) DO NOTHING`,
 				[submission.id, conversation.id, draft.requestId ?? null, draft.type],
 			)
@@ -135,7 +135,7 @@ export class Mirror {
 
 	async #writeSubmission(record: SubmissionRecord, conversationId: ConversationId): Promise<void> {
 		await this.#pool.query(
-			`INSERT INTO agent_submissions (id, conversation_id, request_id, type, status, entry_id, answer_entry_id, reason, detail)
+			`INSERT INTO durable_agent_submissions (id, conversation_id, request_id, type, status, entry_id, answer_entry_id, reason, detail)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 			 ON CONFLICT (id) DO UPDATE SET
 			   status = EXCLUDED.status, entry_id = EXCLUDED.entry_id, answer_entry_id = EXCLUDED.answer_entry_id,
@@ -160,7 +160,7 @@ export class Mirror {
 
 	async #upsertConversation(record: ConversationRecord): Promise<void> {
 		await this.#pool.query(
-			`INSERT INTO agent_conversations (id, parent_conversation_id, parent_at_entry_id, owner_conversation_id, owner_task_id)
+			`INSERT INTO durable_agent_conversations (id, parent_conversation_id, parent_at_entry_id, owner_conversation_id, owner_task_id)
 			 VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING`,
 			[
 				record.id,
@@ -188,19 +188,19 @@ export class Mirror {
 			await client.query("BEGIN");
 			for (const entry of entries) {
 				await client.query(
-					`INSERT INTO agent_entries (id, conversation_id, kind, data, model, head_entry_id, by_task_id)
+					`INSERT INTO durable_agent_entries (id, conversation_id, kind, data, model, head_entry_id, by_task_id)
 					 VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (id) DO NOTHING`,
 					[entry.id, id, entry.kind, json(entry.data), json(entry.model), entry.head ?? null, entry.byTaskId ?? null],
 				);
 			}
 			for (const doc of docs) {
 				await client.query(
-					`INSERT INTO agent_documents (conversation_id, kind, body) VALUES ($1, $2, $3)
+					`INSERT INTO durable_agent_documents (conversation_id, kind, body) VALUES ($1, $2, $3)
 					 ON CONFLICT (conversation_id, kind) DO UPDATE SET body = EXCLUDED.body, updated_at = now()`,
 					[id, doc.kind, doc.body],
 				);
 			}
-			await client.query("UPDATE agent_conversations SET updated_at = now() WHERE id = $1", [id]);
+			await client.query("UPDATE durable_agent_conversations SET updated_at = now() WHERE id = $1", [id]);
 			await client.query("SELECT pg_notify($1, $2)", [
 				MIRROR_CHANNEL,
 				JSON.stringify({
