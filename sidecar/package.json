@@ -1,0 +1,30 @@
+{
+  "name": "durable-agent-sidecar",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "durable_agent sidecar: pi-durable runtime, mirrored into the Rails app's Postgres.",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "dev": "node --watch --env-file-if-exists=.env src/main.ts",
+    "start": "node --env-file-if-exists=.env src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/",
+    "db:schema": "psql \"$DATABASE_URL\" -f sql/schema.sql"
+  },
+  "dependencies": {
+    "@earendil-works/chord": "1.3.0",
+    "@earendil-works/pi-ai": "1.3.0",
+    "@earendil-works/pi-durable": "1.3.0",
+    "@hono/node-server": "^1.14.0",
+    "hono": "^4.7.0",
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/pg": "^8.11.0",
+    "typescript": "^5.8.0"
+  }
+}

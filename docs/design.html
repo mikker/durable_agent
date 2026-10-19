@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Durable Agent Gem</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  /* Layout: a single reading column (68ch) for prose, with figures and tables allowed to run to 960px. */
+  :root {
+    --bg: #f6f7f9;
+    --surface: #ffffff;
+    --fg: #1d2430;
+    --muted: #5d6677;
+    --rule: #d6dae2;
+    --accent: #0f766e;        /* the sidecar: the one process this sketch is about */
+    --accent-soft: #d8efec;
+    --warn: #9a5b00;
+    --code-bg: #eceef2;
+    --display: "IBM Plex Sans Condensed", "Helvetica Neue", Arial, sans-serif;
+    --body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #151920; --surface: #1c2129; --fg: #e6e9ee; --muted: #9aa4b4; --rule: #313a47;
+      --accent: #3fb8ab; --accent-soft: #163a37; --warn: #e0a84a; --code-bg: #232a35;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #151920; --surface: #1c2129; --fg: #e6e9ee; --muted: #9aa4b4; --rule: #313a47;
+    --accent: #3fb8ab; --accent-soft: #163a37; --warn: #e0a84a; --code-bg: #232a35;
+    color-scheme: dark;
+  }
+
+  body {
+    background: var(--bg); color: var(--fg);
+    font-family: var(--body); font-size: 16px; line-height: 1.55;
+    padding-block: 32px 80px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  main { max-width: 960px; margin: 0 auto; display: grid; gap: 40px; }
+  .prose { max-width: 68ch; }
+  h1, h2, h3 { font-family: var(--display); text-wrap: balance; line-height: 1.15; margin: 0; }
+  h1 { font-size: 2.4rem; font-weight: 600; letter-spacing: -0.01em; }
+  h2 { font-size: 1.5rem; font-weight: 600; margin-block: 0 12px; }
+  h3 { font-size: 1.1rem; font-weight: 600; margin-block: 20px 6px; }
+  p { margin: 0 0 12px; }
+  .eyebrow { font-family: var(--mono); font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+  .lede { font-size: 1.15rem; color: var(--muted); max-width: 60ch; }
+  header { display: grid; gap: 10px; }
+  section { display: grid; gap: 8px; }
+  a { color: var(--accent); }
+  code, pre { font-family: var(--mono); font-size: 0.88em; }
+  code { background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+  pre { background: var(--code-bg); padding: 14px 16px; border-radius: 6px; overflow-x: auto; line-height: 1.45; margin: 8px 0 14px; }
+  pre code { background: none; padding: 0; }
+  ul, ol { margin: 0 0 12px; padding-left: 1.3em; }
+  li { margin-bottom: 4px; }
+  li::marker { color: var(--muted); }
+  figure { margin: 8px 0 4px; background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 16px; overflow-x: auto; }
+  figure svg { display: block; width: 100%; max-width: 100%; height: auto; font-family: var(--body); }
+  figcaption { font-size: 0.88rem; color: var(--muted); margin-top: 10px; max-width: 70ch; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.92rem; font-variant-numeric: tabular-nums; }
+  .table-wrap { overflow-x: auto; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--rule); }
+  th { font-family: var(--display); font-weight: 600; font-size: 0.85rem; letter-spacing: 0.02em; color: var(--muted); }
+  td:first-child { white-space: nowrap; }
+  .keep { color: var(--accent); font-weight: 500; }
+  .cut { color: var(--warn); font-weight: 500; }
+  .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+  .grid-2 > * { min-width: 0; }
+  .callout { border-left: 3px solid var(--accent); background: var(--surface); padding: 12px 16px; border-radius: 0 6px 6px 0; max-width: 68ch; }
+  .callout p:last-child { margin: 0; }
+  .budget { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+  .budget > div { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 10px 12px; }
+  .budget .n { font-family: var(--display); font-size: 1.6rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .budget .l { font-size: 0.8rem; color: var(--muted); }
+  .steps { counter-reset: step; list-style: none; padding: 0; display: grid; gap: 10px; }
+  .steps li { display: grid; grid-template-columns: 32px 1fr; gap: 10px; align-items: baseline; }
+  .steps li::before { counter-increment: step; content: counter(step); font-family: var(--display); font-weight: 600; color: var(--accent); font-size: 1.2rem; }
+  .steps li strong { display: block; }
+  .steps li span { color: var(--muted); font-size: 0.95rem; }
+  .svg-accent { fill: var(--accent-soft); stroke: var(--accent); }
+  .svg-box { fill: var(--surface); stroke: currentColor; }
+  .svg-faint { stroke: var(--rule); }
+  .svg-muted { fill: var(--muted); }
+  .svg-accent-text { fill: var(--accent); }
+  .svg-dashed { stroke-dasharray: 5 4; }
+  @media (max-width: 480px) { h1 { font-size: 1.9rem; } body { font-size: 15px; } }
+</style>
+</head>
+<body>
+
+<main>
+  <header>
+    <div class="eyebrow">Sketch · smallest shippable version</div>
+    <h1>durable_agent: pi-durable as one Rails gem</h1>
+    <p class="lede">One <code>bundle add</code>, one migration, one extra process. The gem carries the sidecar inside it; the app never sees two products.</p>
+    <p class="prose"><em>durable_agent</em> is a placeholder name. Everything below is sized from a working reference integration (a Rails chat app with a hand-rolled sidecar): what to keep, what to cut, and what the contract between the two halves has to be so the pi-durable churn stays inside the gem.</p>
+  </header>
+
+  <section>
+    <h2>What the app author does</h2>
+    <div class="grid-2">
+      <div>
+        <h3>Install</h3>
+<pre><code>bundle add durable_agent
+bin/rails g durable_agent:install   # migration, initializer, Procfile.dev lines
+bin/rails db:migrate
+bin/dev                             # web, css, sidecar, relay</code></pre>
+      </div>
+      <div>
+        <h3>Use</h3>
+<pre><code>conversation = DurableAgent.start            # model from config
+conversation.say("Summarize the invoice",
+                 request_id: message.id)      # idempotent
+conversation.transcript                      # mirrored entries
+conversation.busy?                           # pi.live document
+
+# in the view
+turbo_stream_from conversation               # refresh broadcasts</code></pre>
+      </div>
+    </div>
+    <p class="prose">That is the whole public surface for v0. Tools are the one addition that makes it feel native, and they are declared in Ruby (below).</p>
+  </section>
+
+  <section>
+    <h2>Runtime shape</h2>
+    <figure>
+      <svg viewBox="0 0 900 430" role="img" aria-label="Rails app with the durable_agent gem sends commands to the sidecar over HTTP; the sidecar owns a SQLite harness file, writes the mirror tables in the app's Postgres, and Postgres NOTIFY wakes the gem's relay, which broadcasts to the browser. The sidecar calls back into Rails to run Ruby tools and talks to the model provider.">
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+          <marker id="ah-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" class="svg-accent-text"/>
+          </marker>
+        </defs>
+        <g font-size="12" fill="currentColor">
+          <!-- Browser -->
+          <rect x="30" y="40" width="150" height="56" rx="6" class="svg-box" stroke-width="1.2"/>
+          <text x="105" y="64" text-anchor="middle" font-weight="600">Browser</text>
+          <text x="105" y="82" text-anchor="middle" class="svg-muted" font-size="11">Turbo + Solid Cable</text>
+
+          <!-- Rails app -->
+          <rect x="30" y="150" width="260" height="190" rx="8" class="svg-box" stroke-width="1.2"/>
+          <text x="46" y="174" font-weight="600" font-size="13">Rails app</text>
+          <rect x="46" y="188" width="228" height="136" rx="6" fill="none" stroke="currentColor" stroke-width="1" class="svg-dashed"/>
+          <text x="58" y="207" font-weight="600">durable_agent gem</text>
+          <text x="58" y="228" font-size="11">Client · POST commands</text>
+          <text x="58" y="246" font-size="11">Mirror models · read-only</text>
+          <text x="58" y="264" font-size="11">Relay · LISTEN → broadcast</text>
+          <text x="58" y="282" font-size="11">Tool classes · Ruby</text>
+          <text x="58" y="306" font-size="11" class="svg-muted">rake durable_agent:sidecar, :relay</text>
+
+          <!-- Sidecar -->
+          <rect x="400" y="150" width="240" height="190" rx="8" class="svg-accent" stroke-width="1.4"/>
+          <text x="416" y="174" font-weight="600" font-size="13" class="svg-accent-text">Sidecar (bundled, Node)</text>
+          <text x="416" y="200" font-size="11">HTTP API · 7 routes</text>
+          <text x="416" y="218" font-size="11">pi-durable Harness</text>
+          <text x="416" y="236" font-size="11">pi-ai providers + OAuth</text>
+          <text x="416" y="254" font-size="11">Mirror writer + NOTIFY</text>
+          <text x="416" y="272" font-size="11">Postgres credential store</text>
+          <text x="416" y="296" font-size="11" class="svg-muted">one process, one storage file</text>
+
+          <!-- SQLite -->
+          <rect x="440" y="380" width="160" height="36" rx="4" class="svg-box" stroke-width="1"/>
+          <text x="520" y="403" text-anchor="middle" font-size="11">harness.sqlite · owned</text>
+          <line x1="520" y1="340" x2="520" y2="380" stroke="currentColor" stroke-width="1.2" marker-end="url(#ah)"/>
+
+          <!-- Provider -->
+          <rect x="720" y="40" width="150" height="56" rx="28" class="svg-box" stroke-width="1.2"/>
+          <text x="795" y="64" text-anchor="middle" font-weight="600">Model provider</text>
+          <text x="795" y="82" text-anchor="middle" class="svg-muted" font-size="11">OpenAI, Anthropic</text>
+          <line x1="600" y1="150" x2="730" y2="92" stroke="currentColor" stroke-width="1.2" marker-end="url(#ah)"/>
+          <text x="690" y="112" text-anchor="middle" font-size="11" class="svg-muted">API key or ChatGPT OAuth</text>
+
+          <!-- Postgres -->
+          <g>
+            <path d="M720 170 a75 14 0 0 1 150 0 v150 a75 14 0 0 1 -150 0 z" class="svg-box" stroke-width="1.2"/>
+            <ellipse cx="795" cy="170" rx="75" ry="14" fill="none" stroke="currentColor" stroke-width="1.2"/>
+            <text x="795" y="205" text-anchor="middle" font-weight="600">Postgres</text>
+            <text x="795" y="232" text-anchor="middle" font-size="11">app tables</text>
+            <line x1="740" y1="246" x2="850" y2="246" class="svg-faint" stroke-width="1"/>
+            <text x="795" y="266" text-anchor="middle" font-size="11" class="svg-accent-text">agent_* mirror</text>
+            <text x="795" y="283" text-anchor="middle" font-size="10" class="svg-muted">conversations, entries,</text>
+            <text x="795" y="297" text-anchor="middle" font-size="10" class="svg-muted">documents, submissions,</text>
+            <text x="795" y="311" text-anchor="middle" font-size="10" class="svg-muted">reports, credentials</text>
+          </g>
+
+          <!-- Rails -> Sidecar commands -->
+          <line x1="290" y1="200" x2="400" y2="200" stroke="currentColor" stroke-width="1.4" marker-end="url(#ah)"/>
+          <text x="345" y="192" text-anchor="middle" font-size="11">commands, bearer token</text>
+
+          <!-- Sidecar -> Rails tools (dashed) -->
+          <line x1="400" y1="282" x2="290" y2="282" stroke="currentColor" stroke-width="1.2" class="svg-dashed" marker-end="url(#ah)"/>
+          <text x="345" y="300" text-anchor="middle" font-size="11">runs a Ruby tool</text>
+
+          <!-- Sidecar -> Postgres mirror -->
+          <line x1="640" y1="260" x2="722" y2="260" class="svg-accent-text" stroke="var(--accent)" stroke-width="1.6" marker-end="url(#ah-accent)"/>
+          <text x="681" y="250" text-anchor="middle" font-size="11" class="svg-accent-text">mirror commit</text>
+
+          <!-- Postgres NOTIFY -> Rails relay (curved along the bottom) -->
+          <path d="M 795 334 C 795 400, 160 400, 160 342" fill="none" stroke="currentColor" stroke-width="1.2" marker-end="url(#ah)"/>
+          <text x="330" y="372" text-anchor="middle" font-size="11">NOTIFY agent_mirror · relay reads the row</text>
+
+          <!-- Rails -> Browser -->
+          <line x1="105" y1="150" x2="105" y2="98" stroke="currentColor" stroke-width="1.2" marker-end="url(#ah)"/>
+          <text x="118" y="128" font-size="11">Turbo Stream</text>
+          <line x1="140" y1="96" x2="140" y2="150" stroke="currentColor" stroke-width="1.2" class="svg-dashed" marker-end="url(#ah)"/>
+          <text x="200" y="128" font-size="11" class="svg-muted">forms, GET</text>
+        </g>
+      </svg>
+      <figcaption>The sidecar is the only writer of agent state and the only owner of the SQLite file. Rails reads agent state from its own Postgres and only ever sends commands. The dashed return path is the one addition over the reference integration: the sidecar asks Rails to run tools.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>What a message does</h2>
+    <figure>
+      <svg viewBox="0 0 900 330" role="img" aria-label="Sequence: the browser posts a message to Rails, Rails posts a submission to the sidecar and redirects, the sidecar streams from the model and commits each frame to the mirror with a NOTIFY, the relay broadcasts a refresh, and the browser morphs the page from Rails.">
+        <defs>
+          <marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+        <g font-size="12" fill="currentColor">
+          <!-- lanes -->
+          <g font-weight="600" text-anchor="middle">
+            <text x="80" y="24">Browser</text>
+            <text x="270" y="24">Rails</text>
+            <text x="470" y="24" class="svg-accent-text">Sidecar</text>
+            <text x="660" y="24">Postgres</text>
+            <text x="830" y="24">Model</text>
+          </g>
+          <g stroke="currentColor" stroke-width="1" class="svg-faint">
+            <line x1="80" y1="34" x2="80" y2="320"/>
+            <line x1="270" y1="34" x2="270" y2="320"/>
+            <line x1="660" y1="34" x2="660" y2="320"/>
+            <line x1="830" y1="34" x2="830" y2="320"/>
+          </g>
+          <line x1="470" y1="34" x2="470" y2="320" stroke="var(--accent)" stroke-width="1.2"/>
+
+          <!-- 1 -->
+          <line x1="80" y1="60" x2="268" y2="60" stroke="currentColor" stroke-width="1.3" marker-end="url(#ah2)"/>
+          <text x="174" y="52" text-anchor="middle" font-size="11">1 · POST form</text>
+          <!-- 2 -->
+          <line x1="270" y1="90" x2="468" y2="90" stroke="currentColor" stroke-width="1.3" marker-end="url(#ah2)"/>
+          <text x="369" y="82" text-anchor="middle" font-size="11">2 · POST /conversations/:id/submissions {request_id}</text>
+          <!-- 3 redirect back -->
+          <line x1="270" y1="118" x2="82" y2="118" stroke="currentColor" stroke-width="1.3" marker-end="url(#ah2)"/>
+          <text x="174" y="110" text-anchor="middle" font-size="11">3 · 303, page re-renders from mirror</text>
+          <!-- 4 model -->
+          <line x1="470" y1="150" x2="828" y2="150" stroke="currentColor" stroke-width="1.3" marker-end="url(#ah2)"/>
+          <text x="650" y="142" text-anchor="middle" font-size="11">4 · stream request, tool rounds</text>
+          <line x1="830" y1="176" x2="472" y2="176" stroke="currentColor" stroke-width="1.3" class="svg-dashed" marker-end="url(#ah2)"/>
+          <text x="650" y="192" text-anchor="middle" font-size="11" class="svg-muted">tokens, up to every 100 ms</text>
+          <!-- 5 commit + mirror -->
+          <line x1="470" y1="220" x2="658" y2="220" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#ah2)"/>
+          <text x="564" y="212" text-anchor="middle" font-size="11" class="svg-accent-text">5 · commit frame, INSERT/UPSERT, NOTIFY</text>
+          <!-- 6 notify to relay -->
+          <line x1="660" y1="250" x2="272" y2="250" stroke="currentColor" stroke-width="1.3" marker-end="url(#ah2)"/>
+          <text x="466" y="242" text-anchor="middle" font-size="11">6 · relay wakes, broadcast_refresh_to(conversation)</text>
+          <!-- 7 refresh -->
+          <line x1="270" y1="280" x2="82" y2="280" stroke="currentColor" stroke-width="1.3" marker-end="url(#ah2)"/>
+          <text x="174" y="272" text-anchor="middle" font-size="11">7 · refresh stream</text>
+          <line x1="80" y1="306" x2="268" y2="306" stroke="currentColor" stroke-width="1.3" class="svg-dashed" marker-end="url(#ah2)"/>
+          <text x="174" y="322" text-anchor="middle" font-size="11" class="svg-muted">8 · GET page, Turbo morphs</text>
+        </g>
+      </svg>
+      <figcaption>Steps 4 and 5 repeat for every committed frame while the model streams. The gem's default relay sends a refresh broadcast, so the gem ships no view code at all. An app that wants granular streams replaces one callback (see the relay row below).</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>What is in the box</h2>
+    <div class="budget">
+      <div><div class="n">~550</div><div class="l">lines of Ruby</div></div>
+      <div><div class="n">~800</div><div class="l">lines of TypeScript</div></div>
+      <div><div class="n">7</div><div class="l">HTTP routes</div></div>
+      <div><div class="n">6</div><div class="l">mirror tables</div></div>
+      <div><div class="n">2</div><div class="l">NOTIFY channels</div></div>
+      <div><div class="n">1</div><div class="l">extra process</div></div>
+    </div>
+<pre><code>durable_agent/
+  lib/durable_agent.rb                  config, DurableAgent.start, DurableAgent.conversation(id)
+  lib/durable_agent/engine.rb           isolated engine, mounts /durable_agent/tools
+  lib/durable_agent/client.rb           Net::HTTP, bearer token, Error/Busy
+  lib/durable_agent/relay.rb            LISTEN loop → config.on_mirror (default: refresh broadcast)
+  lib/durable_agent/tool.rb             base class: description, params schema, call(args)
+  lib/durable_agent/sidecar.rb          builds env from Rails config, execs the bundled runtime
+  lib/tasks/durable_agent.rake          durable_agent:sidecar, durable_agent:relay
+  app/models/durable_agent/             conversation, entry, document, submission, report (read-only)
+  app/controllers/durable_agent/        tools_controller (POST /durable_agent/tools/:name)
+  lib/generators/durable_agent/install  migration, initializer, Procfile.dev lines
+  sidecar/src/                          main, harness, mirror, server, credentials, auth, tools
+  sidecar/dist/sidecar.js               esbuild bundle shipped in the gem (v0 needs Node ≥ 22)</code></pre>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Piece in the reference integration</th><th>v0 gem</th><th>Why</th></tr></thead>
+        <tbody>
+          <tr><td>Sidecar HTTP API, 20 routes</td><td class="keep">keep 7</td><td>health, create conversation, submit, abort, auth status, start login, finish login, sign out. Compact, reset, SSE events, tasks, usage wait for a need.</td></tr>
+          <tr><td>Mirror writer + NOTIFY</td><td class="keep">keep as is</td><td>This is the product. Schema becomes <code>agent_schema_version = 1</code>.</td></tr>
+          <tr><td>Postgres credential store, device id</td><td class="keep">keep</td><td>Sign in with ChatGPT needs it; it is 80 lines.</td></tr>
+          <tr><td>Rails mirror models, client, Connection</td><td class="keep">keep, namespace</td><td>Become <code>DurableAgent::*</code>. Same read-only rule.</td></tr>
+          <tr><td>Relay broadcasting Phlex components</td><td class="cut">replace</td><td>Default becomes <code>broadcast_refresh_to(conversation)</code>; apps override <code>config.on_mirror</code> for granular streams.</td></tr>
+          <tr><td>lookup_record tool (TypeScript)</td><td class="cut">replace</td><td>Tools move to Ruby; the sidecar gets one generic "call Rails" tool factory.</td></tr>
+          <tr><td>Root .env, Procfile, bin/dev</td><td class="cut">replace</td><td>Rails config is the source of truth; <code>durable_agent:sidecar</code> derives the env. The generator adds two Procfile.dev lines.</td></tr>
+          <tr><td>Chats UI, Nitro Kit, sign-in page</td><td class="cut">out of the gem</td><td>App code. A later <code>durable_agent:scaffold</code> generator can drop it in.</td></tr>
+          <tr><td>Reports webhook to Rails</td><td class="cut">drop</td><td>Reports are in the table and on the NOTIFY channel; the webhook was redundant.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>The contract</h2>
+    <p class="prose">Two halves, one version number. The sidecar ships inside the gem, so the pair is always compatible, but the contract still has to be explicit: it is what lets the gem upgrade pi-durable without touching the app.</p>
+    <div class="grid-2">
+      <div>
+        <h3>HTTP (sidecar ← gem)</h3>
+        <div class="table-wrap">
+        <table>
+          <tbody>
+            <tr><td><code>GET /health</code></td><td>liveness, schema version</td></tr>
+            <tr><td><code>POST /conversations</code></td><td>{model?, instructions?} → {id}</td></tr>
+            <tr><td><code>POST /conversations/:id/submissions</code></td><td>{content, request_id, when_busy?} → {id}, 409 busy, 422 unknown model</td></tr>
+            <tr><td><code>POST /conversations/:id/abort</code></td><td>stop the run</td></tr>
+            <tr><td><code>GET /auth</code></td><td>{provider → type | null}</td></tr>
+            <tr><td><code>POST /auth/:provider/logins</code></td><td>start; <code>/:id/callback</code> finishes</td></tr>
+            <tr><td><code>DELETE /auth/:provider</code></td><td>sign out</td></tr>
+          </tbody>
+        </table>
+        </div>
+      </div>
+      <div>
+        <h3>Postgres (sidecar → gem)</h3>
+        <div class="table-wrap">
+        <table>
+          <tbody>
+            <tr><td><code>agent_conversations</code></td><td>pi ids, parent, owner</td></tr>
+            <tr><td><code>agent_entries</code></td><td>immutable; kind, model, data</td></tr>
+            <tr><td><code>agent_documents</code></td><td>pi.live, pi.inbox, pi.agent, pi.usage</td></tr>
+            <tr><td><code>agent_submissions</code></td><td>request_id, status, reason</td></tr>
+            <tr><td><code>agent_reports</code></td><td>faulted and parked tasks</td></tr>
+            <tr><td><code>agent_credentials</code></td><td>sidecar only; Rails has no model</td></tr>
+            <tr><td><code>NOTIFY agent_mirror</code></td><td>{conversationId, entries[], docs[]}</td></tr>
+            <tr><td><code>NOTIFY agent_reports</code></td><td>{id, conversationId, type}</td></tr>
+          </tbody>
+        </table>
+        </div>
+      </div>
+    </div>
+    <h3>HTTP (gem ← sidecar)</h3>
+    <p class="prose">One route the other way: <code>POST /durable_agent/tools/:name</code> with the same bearer token. It is the only reason the sidecar needs to know the Rails URL.</p>
+  </section>
+
+  <section>
+    <h2>Tools in Ruby</h2>
+    <p class="prose">This is the one feature beyond the reference integration that v0 should include. Without it every tool is TypeScript inside the gem, which defeats the point of a Rails gem. With it the sidecar stays generic.</p>
+<pre><code># app/tools/lookup_invoice.rb
+class LookupInvoice &lt; DurableAgent::Tool
+  description "Fetch one invoice by number"
+  param :number, :string, "Invoice number like INV-1042"
+  replay :safe                      # no side effects; may rerun after a crash
+
+  def call(number:)
+    Invoice.find_by!(number:).as_json(only: %i[ number total status due_on ])
+  end
+end
+
+# config/initializers/durable_agent.rb
+DurableAgent.configure do |config|
+  config.model = "openai/gpt-6.1-sol"
+  config.tools = [ LookupInvoice ]
+end</code></pre>
+    <figure>
+      <svg viewBox="0 0 900 190" role="img" aria-label="Tool round trip: the sidecar fetches tool definitions from Rails at boot; when the model calls a tool, the sidecar posts the arguments to Rails, the Ruby tool class runs, the JSON result is committed as a tool-result entry and returned to the model.">
+        <defs>
+          <marker id="ah3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+        <g font-size="12" fill="currentColor">
+          <rect x="30" y="60" width="170" height="70" rx="6" class="svg-box" stroke-width="1.2"/>
+          <text x="115" y="88" text-anchor="middle" font-weight="600">Model</text>
+          <text x="115" y="108" text-anchor="middle" font-size="11" class="svg-muted">toolCall lookup_invoice</text>
+
+          <rect x="340" y="60" width="200" height="70" rx="6" class="svg-accent" stroke-width="1.4"/>
+          <text x="440" y="88" text-anchor="middle" font-weight="600" class="svg-accent-text">Sidecar</text>
+          <text x="440" y="108" text-anchor="middle" font-size="11">generic rails tool</text>
+
+          <rect x="690" y="60" width="180" height="70" rx="6" class="svg-box" stroke-width="1.2"/>
+          <text x="780" y="88" text-anchor="middle" font-weight="600">Rails</text>
+          <text x="780" y="108" text-anchor="middle" font-size="11" class="svg-muted">LookupInvoice#call</text>
+
+          <line x1="200" y1="80" x2="338" y2="80" stroke="currentColor" stroke-width="1.3" marker-end="url(#ah3)"/>
+          <text x="270" y="72" text-anchor="middle" font-size="11">call {number}</text>
+          <line x1="340" y1="112" x2="202" y2="112" stroke="currentColor" stroke-width="1.3" marker-end="url(#ah3)"/>
+          <text x="270" y="130" text-anchor="middle" font-size="11">pi.tool-result</text>
+
+          <line x1="540" y1="80" x2="688" y2="80" stroke="currentColor" stroke-width="1.3" marker-end="url(#ah3)"/>
+          <text x="614" y="72" text-anchor="middle" font-size="11">POST /durable_agent/tools/lookup_invoice</text>
+          <line x1="690" y1="112" x2="542" y2="112" stroke="currentColor" stroke-width="1.3" marker-end="url(#ah3)"/>
+          <text x="614" y="130" text-anchor="middle" font-size="11">200 JSON, or 4xx → isError</text>
+
+          <path d="M 440 60 C 440 20, 780 20, 780 60" fill="none" stroke="currentColor" stroke-width="1.1" class="svg-dashed" marker-end="url(#ah3)"/>
+          <text x="610" y="32" text-anchor="middle" font-size="11" class="svg-muted">at boot: GET /durable_agent/tools → name, description, JSON schema, replay</text>
+
+          <text x="450" y="172" text-anchor="middle" font-size="11" class="svg-muted">The sidecar commits the result like any tool; a crash mid-call reruns only tools declared replay :safe.</text>
+        </g>
+      </svg>
+      <figcaption>One generic tool factory in the sidecar turns each Rails-declared tool into a pi-durable tool. Authorization, records, and queries stay in Ruby. Durability semantics stay in pi.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>Configuration belongs to Rails</h2>
+    <p class="prose">Today the two halves share a hand-written <code>.env</code>. In the gem, <code>bin/rails durable_agent:sidecar</code> builds the sidecar's environment from what Rails already knows and execs the bundled runtime.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Sidecar needs</th><th>Comes from</th></tr></thead>
+        <tbody>
+          <tr><td>DATABASE_URL</td><td>the primary connection in <code>database.yml</code></td></tr>
+          <tr><td>SIDECAR_TOKEN</td><td><code>credentials.durable_agent.token</code>, generated by the installer</td></tr>
+          <tr><td>RAILS_URL</td><td><code>config.durable_agent.url</code>, default <code>http://127.0.0.1:3000</code></td></tr>
+          <tr><td>MODEL_PROVIDER, MODEL_ID</td><td><code>config.durable_agent.model = "openai/gpt-6.1-sol"</code></td></tr>
+          <tr><td>STORAGE_PATH</td><td><code>storage/durable_agent.sqlite</code>, next to Active Storage</td></tr>
+          <tr><td>SIDECAR_PORT, AGENT_NAME</td><td>config with defaults</td></tr>
+          <tr><td>OPENAI_API_KEY and friends</td><td>pass through from the Rails process environment</td></tr>
+        </tbody>
+      </table>
+    </div>
+<pre><code># Procfile.dev, added by the installer
+sidecar: bin/rails durable_agent:sidecar
+relay:   bin/rails durable_agent:relay</code></pre>
+    <div class="callout">
+      <p><strong>Distribution.</strong> v0 ships <code>sidecar/dist/sidecar.js</code>, one esbuild bundle inside the gem, and requires Node 22 or newer on the host. That is the same ask as jsbundling. The step after that is a compiled binary per platform, published as platform gems the way tailwindcss-ruby does it, so Node disappears from the requirements. The runtime check lives in one place, <code>DurableAgent::Sidecar.command</code>, so the swap touches nothing else.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Deliberately out of v0</h2>
+    <ul class="prose">
+      <li><strong>Per-user credentials.</strong> Sign in with ChatGPT is per installation. Multi-user apps will want per-account routing; that changes the sidecar's model resolution and is a v1 topic.</li>
+      <li><strong>More than one sidecar.</strong> One process per database. Tenant namespaces via the pi table prefix come later, with docs on who owns which storage.</li>
+      <li><strong>Compaction, reset, task graph, usage.</strong> pi-durable has them; the routes are ten lines each when someone needs them.</li>
+      <li><strong>Any UI.</strong> The gem renders nothing. A chat scaffold generator can come in a later release.</li>
+      <li><strong>MCP.</strong> pi-ai supports it; exposing it means the sidecar runs other processes, which deserves its own design.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Build order</h2>
+    <ol class="steps">
+      <li><strong>Extract the sidecar into <code>sidecar/</code> inside a new gem repo and cut it to 7 routes.</strong><span>Add <code>GET /health</code> schema version, the 422 for unknown models, and the generic Rails tool. Keep the mirror and credential tests.</span></li>
+      <li><strong>Move the Ruby into an isolated engine.</strong><span>Models, client, relay with the refresh-broadcast default, <code>DurableAgent::Tool</code>, tools controller. Port the reference tests; the round-trip test becomes the gem's main integration test.</span></li>
+      <li><strong>Write the installer and the two rake tasks.</strong><span>Migration with <code>agent_schema_version</code>, initializer, Procfile lines, token in credentials. Env derivation from Rails config.</span></li>
+      <li><strong>Bundle the sidecar with esbuild and vendor <code>dist/sidecar.js</code> in the gem.</strong><span>One CI job builds it; the gemspec includes it. Document the Node requirement.</span></li>
+      <li><strong>Run a real app on the gem.</strong><span>Delete the duplicated code from the reference app, keep its chat UI as app code. If it runs on the gem with no local patches, v0 is done.</span></li>
+    </ol>
+    <p class="prose">Order matters only in one place: the contract version goes in before anything is published, because the first app on the gem must survive the first pi-durable upgrade without a migration.</p>
+  </section>
+</main>
+</body>
+</html>
