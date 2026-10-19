@@ -7,7 +7,17 @@ class ApplicationController < ActionController::Base
 
   # Commands go to the sidecar over HTTP; reads never do. Tell the user instead of failing the request.
   rescue_from DurableAgent::Error do |error|
-    message = error.is_a?(DurableAgent::Unavailable) ? "The agent sidecar is not running." : "The agent sidecar refused: #{error.message}"
-    redirect_back_or_to root_path, status: :see_other, alert: message
+    redirect_back_or_to root_path, status: :see_other, alert: sidecar_error_message(error)
   end
+
+  private
+    # Unavailable is raised both when the sidecar is down and, with status 503, while it boots ("sidecar is starting").
+    def sidecar_error_message(error)
+      case error
+      when DurableAgent::Unavailable
+        error.status == 503 ? "The agent sidecar is starting. Try again in a moment." : "The agent sidecar is not running."
+      else
+        "The agent sidecar refused: #{error.message}"
+      end
+    end
 end

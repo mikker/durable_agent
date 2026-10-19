@@ -1,10 +1,12 @@
-# `record` is pi-durable's EntryRecord as JSON text; kind, model and data live only there.
+# `record` is pi-durable's EntryRecord as JSON text; kind, model and data live only there. `created_at` drives
+# Conversation#last_activity_at, which orders the chats list: invoice, then poem, then failed.
 <% json = ->(value) { value.to_json.to_json } %>
 system:
   id: 900100
   conversation_id: 900001
   head: 900100
   commit_seq: 1
+  created_at: <%= 10.minutes.ago.to_fs(:db) %>
   record: <%= json.({ id: 900100, conversationId: 900001, kind: "pi.system", head: 900100,
     model: [ { role: "system", content: "You are the assistant." } ] }) %>
 
@@ -12,6 +14,7 @@ question:
   id: 900101
   conversation_id: 900001
   commit_seq: 2
+  created_at: <%= 9.minutes.ago.to_fs(:db) %>
   record: <%= json.({ id: 900101, conversationId: 900001, kind: "pi.user",
     model: [ { role: "user", content: "What is invoice INV-1?" } ] }) %>
 
@@ -19,7 +22,8 @@ answer_with_tool:
   id: 900102
   conversation_id: 900001
   commit_seq: 3
-  record: <%= json.({ id: 900102, conversationId: 900001, kind: "pi.assistant", byTaskId: 900600,
+  created_at: <%= 8.minutes.ago.to_fs(:db) %>
+  record: <%= json.({ id: 900102, conversationId: 900001, kind: "pi.assistant",
     model: [ { role: "assistant", content: [
       { type: "thinking", thinking: "Look it up." },
       { type: "text", text: "Let me look." },
@@ -29,6 +33,7 @@ tool_result:
   id: 900103
   conversation_id: 900001
   commit_seq: 4
+  created_at: <%= 7.minutes.ago.to_fs(:db) %>
   record: <%= json.({ id: 900103, conversationId: 900001, kind: "pi.tool-result",
     model: [ { role: "toolResult", toolCallId: "call-1", toolName: "lookup_invoice", isError: false,
       content: [ { type: "text", text: '{"number":"INV-1","total":42}' } ] } ] }) %>
@@ -37,23 +42,27 @@ answer:
   id: 900104
   conversation_id: 900001
   commit_seq: 5
-  record: <%= json.({ id: 900104, conversationId: 900001, kind: "pi.assistant", data: { usage: { total: 12 } },
+  created_at: <%= 6.minutes.ago.to_fs(:db) %>
+  record: <%= json.({ id: 900104, conversationId: 900001, kind: "pi.assistant",
     model: [ { role: "assistant", content: [ { type: "text", text: "INV-1 totals 42." } ] } ] }) %>
 
 busy_question:
   id: 900201
   conversation_id: 900002
   commit_seq: 6
+  created_at: <%= 1.hour.ago.to_fs(:db) %>
   record: <%= json.({ id: 900201, conversationId: 900002, kind: "pi.user", model: [ { role: "user", content: "Write me a poem" } ] }) %>
 
 failed_answer:
   id: 900301
   conversation_id: 900003
   commit_seq: 7
+  created_at: <%= 25.hours.ago.to_fs(:db) %>
   record: <%= json.({ id: 900301, conversationId: 900003, kind: "pi.assistant", model: [ { role: "assistant", content: "Earlier answer." } ] }) %>
 
 failed_question:
   id: 900302
   conversation_id: 900003
   commit_seq: 8
+  created_at: <%= 1.day.ago.to_fs(:db) %>
   record: <%= json.({ id: 900302, conversationId: 900003, kind: "pi.user", model: [ { role: "user", content: "Are you there?" } ] }) %>

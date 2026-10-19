@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_19_203400) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_19_211644) do
   create_table "chats", force: :cascade do |t|
     t.string "title", null: false
     t.bigint "durable_agent_conversation_id", null: false
@@ -19,10 +19,11 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_19_203400) do
     t.index ["durable_agent_conversation_id"], name: "index_chats_on_durable_agent_conversation_id"
   end
 
-  create_table "durable_agent_conversations", id: :bigint, default: nil, force: :cascade do |t|
+  create_table "durable_agent_conversations", force: :cascade do |t|
     t.bigint "owner_conversation_id"
     t.bigint "owner_task_id"
     t.text "record", null: false
+    t.datetime "created_at", default: -> { "CURRENT_TIMESTAMP" }, null: false
     t.index ["owner_conversation_id", "id"], name: "durable_agent_conversations_by_owner_conversation"
     t.index ["owner_task_id", "id"], name: "durable_agent_conversations_by_owner_task"
   end
@@ -41,7 +42,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_19_203400) do
     t.index ["document_id", "kind", "seq"], name: "durable_agent_document_revisions_by_kind", order: { seq: :desc }
   end
 
-  create_table "durable_agent_documents", id: :bigint, default: nil, force: :cascade do |t|
+  create_table "durable_agent_documents", force: :cascade do |t|
     t.text "kind", null: false
     t.integer "family", null: false
     t.text "key_value", null: false
@@ -64,16 +65,17 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_19_203400) do
     t.integer "version", null: false
   end
 
-  create_table "durable_agent_entries", id: :bigint, default: nil, force: :cascade do |t|
+  create_table "durable_agent_entries", force: :cascade do |t|
     t.bigint "conversation_id", null: false
     t.bigint "head"
     t.bigint "commit_seq", null: false
     t.text "record", null: false
+    t.datetime "created_at", default: -> { "CURRENT_TIMESTAMP" }, null: false
     t.index ["conversation_id", "id"], name: "durable_agent_entries_by_conversation", order: { id: :desc }
     t.index ["conversation_id", "id"], name: "durable_agent_entry_heads_by_conversation", order: { id: :desc }, where: "head IS NOT NULL"
   end
 
-  create_table "durable_agent_record_ids", id: :bigint, default: nil, force: :cascade do |t|
+  create_table "durable_agent_record_ids", force: :cascade do |t|
     t.text "record_type", null: false
   end
 
@@ -94,17 +96,18 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_19_203400) do
     t.datetime "updated_at", null: false
   end
 
-  create_table "durable_agent_submissions", id: :bigint, default: nil, force: :cascade do |t|
+  create_table "durable_agent_submissions", force: :cascade do |t|
     t.bigint "conversation_id", null: false
     t.text "request_id"
     t.text "status", null: false
     t.text "record", null: false
+    t.datetime "created_at", default: -> { "CURRENT_TIMESTAMP" }, null: false
     t.index ["conversation_id", "id"], name: "durable_agent_submissions_by_conversation"
     t.index ["conversation_id", "request_id"], name: "durable_agent_submissions_by_request"
     t.index ["status", "id"], name: "durable_agent_submissions_by_status"
   end
 
-  create_table "durable_agent_tasks", id: :bigint, default: nil, force: :cascade do |t|
+  create_table "durable_agent_tasks", force: :cascade do |t|
     t.bigint "conversation_id", null: false
     t.text "kind", null: false
     t.text "status", null: false

@@ -1,21 +1,8 @@
 _fixture:
   model_class: DurableAgent::Document::Revision
 
+# A document's value is the content of its newest base revision, as JSON text.
 <% json = ->(value) { value.to_json.to_json } %>
-idle_live_base:
-  document_id: 900501
-  seq: 5
-  kind: base
-  version: 4
-  content: <%= json.({}) %>
-
-idle_retired_inbox_base:
-  document_id: 900502
-  seq: 2
-  kind: base
-  version: 1
-  content: <%= json.({ items: [ { id: 1, type: "input" } ] }) %>
-
 busy_live_base:
   document_id: 900503
   seq: 6
@@ -31,17 +18,3 @@ busy_inbox_base:
   kind: base
   version: 2
   content: <%= json.({ items: [ { id: 900405, type: "input" } ] }) %>
-
-forked_notes_base:
-  document_id: 900505
-  seq: 10
-  kind: base
-  version: 1
-  content: <%= json.({ text: "draft" }) %>
-
-forked_notes_delta:
-  document_id: 900505
-  seq: 11
-  kind: delta
-  version: 2
-  content: <%= json.([ { op: "set", path: [ "text" ], value: "final" } ]) %>

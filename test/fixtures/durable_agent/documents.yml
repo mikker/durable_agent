@@ -1,33 +1,12 @@
-# Columns as pi-durable's storage core writes them: `kind` and `key_value` JSON-encoded, `created_at` and
-# `retired_at` commit seqs, `record` the DocumentRecord. The values are in document_revisions.yml.
+# The busy chat's live state. Columns as pi-durable's storage core writes them: `kind` and `key_value`
+# JSON-encoded (DurableAgent::IndexedString), `created_at` a commit seq, `record` the DocumentRecord as JSON text.
+# The values are in document_revisions.yml.
 <% json = ->(value) { value.to_json.to_json } %>
-
-idle_live:
-  id: 900501
-  kind: <%= "pi.live".to_json.to_json %>
-  family: 0
-  key_value: <%= "".to_json.to_json %>
-  scope_kind: conversation
-  owner_id: 900001
-  created_at: 1
-  record: <%= json.({ id: 900501, kind: "pi.live", scope: { kind: "conversation", conversationId: 900001 }, history: "latest", fork: "copy", createdAt: 1 }) %>
-
-idle_retired_inbox:
-  id: 900502
-  kind: <%= "pi.inbox".to_json.to_json %>
-  family: 0
-  key_value: <%= "".to_json.to_json %>
-  scope_kind: conversation
-  owner_id: 900001
-  created_at: 1
-  retired_at: 3
-  record: <%= json.({ id: 900502, kind: "pi.inbox", scope: { kind: "conversation", conversationId: 900001 }, history: "latest", fork: "copy", createdAt: 1, retiredAt: 3 }) %>
-
 busy_live:
   id: 900503
-  kind: <%= "pi.live".to_json.to_json %>
+  kind: <%= DurableAgent::IndexedString.encode("pi.live").to_json %>
   family: 0
-  key_value: <%= "".to_json.to_json %>
+  key_value: <%= DurableAgent::IndexedString.encode("").to_json %>
   scope_kind: conversation
   owner_id: 900002
   created_at: 1
@@ -35,20 +14,10 @@ busy_live:
 
 busy_inbox:
   id: 900504
-  kind: <%= "pi.inbox".to_json.to_json %>
+  kind: <%= DurableAgent::IndexedString.encode("pi.inbox").to_json %>
   family: 0
-  key_value: <%= "".to_json.to_json %>
+  key_value: <%= DurableAgent::IndexedString.encode("").to_json %>
   scope_kind: conversation
   owner_id: 900002
   created_at: 1
   record: <%= json.({ id: 900504, kind: "pi.inbox", scope: { kind: "conversation", conversationId: 900002 }, history: "latest", fork: "copy", createdAt: 1 }) %>
-
-forked_notes:
-  id: 900505
-  kind: <%= "app.notes".to_json.to_json %>
-  family: 0
-  key_value: <%= "".to_json.to_json %>
-  scope_kind: conversation
-  owner_id: 900004
-  created_at: 9
-  record: <%= json.({ id: 900505, kind: "app.notes", scope: { kind: "conversation", conversationId: 900004 }, history: "rewindable", fork: "copy", createdAt: 9 }) %>

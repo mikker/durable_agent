@@ -1,6 +1,6 @@
 class ChatsController < ApplicationController
   def index
-    render Views::Chats::Index.new(chats: Chat.reverse_chronologically, connection: connection)
+    render Views::Chats::Index.new(chats: Chat.by_last_activity.includes(:conversation), connection: connection)
   end
 
   def show

@@ -26,6 +26,10 @@ class Views::Chats::Index < Views::Base
       end
     end
 
+    def last_activity(at)
+      time(datetime: at.iso8601) { "#{time_ago_in_words(at)} ago" }
+    end
+
     def chats_table
       Table(table_aria: { label: "Chats" }) do |table|
         table.thead do
@@ -38,7 +42,7 @@ class Views::Chats::Index < Views::Base
           @chats.each do |chat|
             table.tr(html: { id: dom_id(chat) }) do
               table.th(scope: :row) { a(href: chat_path(chat)) { chat.title } }
-              table.td { time(datetime: chat.updated_at.iso8601) { "#{time_ago_in_words(chat.updated_at)} ago" } }
+              table.td { last_activity(chat.last_activity_at) }
             end
           end
         end

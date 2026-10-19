@@ -2,7 +2,7 @@ require "test_helper"
 
 # Renders a whole chat from the durable_agent_* fixture rows, the way a browser sees it after a refresh.
 class ChatPageTest < ActionDispatch::IntegrationTest
-  setup { stub_sidecar(auth: SidecarStubs::CONNECTED) }
+  setup { stub_sidecar(auth: CONNECTED) }
 
   test "a finished chat shows the transcript with tools collapsed, a live subscription and the composer" do
     chat = chats(:invoice)

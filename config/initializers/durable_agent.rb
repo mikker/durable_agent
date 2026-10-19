@@ -1,7 +1,8 @@
 DurableAgent.configure do |config|
-  # "provider/modelId". "faux/faux-1" runs a scripted offline model, handy in development and CI.
-  # DURABLE_AGENT_MODEL still wins, so `DURABLE_AGENT_MODEL=faux/faux-1 bin/dev` runs offline.
-  config.model = ENV["DURABLE_AGENT_MODEL"].presence || "openai/gpt-6.1-sol"
+  # The default model, "provider/modelId". Unset, it is ENV["DURABLE_AGENT_MODEL"], then "openai/gpt-6.1-sol" (on the
+  # ChatGPT sign-in), so `DURABLE_AGENT_MODEL=faux/faux-1 bin/dev` runs the scripted offline model in both processes.
+  # Setting it here wins over the variable.
+  # config.model = "openai/gpt-6.1-sol"
 
   # Tools are DurableAgent::Tool subclasses. Give their names as strings so code reloading keeps working.
   config.tools = %w[ CurrentTime ]
@@ -15,10 +16,15 @@ DurableAgent.configure do |config|
   # development and test to a value derived from secret_key_base.
   # config.token = "..."
 
-  # Called in this app's web process when the sidecar reports a change. The default refreshes every page
-  # subscribed with `turbo_stream_from conversation`.
+  # The models' base class. If ApplicationRecord uses connects_to (roles, shards), inherit from it.
+  # config.parent_record_class = "ApplicationRecord"
+
+  # Called in this app's web process when the sidecar reports a change. The defaults refresh the pages subscribed
+  # with `turbo_stream_from conversation` (the chat page); reports without a conversation refresh `turbo_stream_from
+  # "durable_agent:reports"`; sign-ins and sign-outs refresh `turbo_stream_from "durable_agent:auth"` (Settings).
   # config.on_change = ->(conversation) { Turbo::StreamsChannel.broadcast_refresh_to(conversation) }
   # config.on_report = ->(report) { Rails.logger.warn(report.message) }
+  # config.on_auth = ->(providers) { Turbo::StreamsChannel.broadcast_refresh_to("durable_agent:auth") }
 end
 
 # In production the sidecar calls this app over plain HTTP at rails_url (loopback by default). With

@@ -6,7 +6,7 @@ class Settings::ChatgptConnectionsController < ApplicationController
 
   def show
     login = @connection.login(params[:login_id]) if params[:login_id]
-    render Views::Settings::ChatgptConnections::Show.new(connection: @connection, login: login, model: running_model)
+    render Views::Settings::ChatgptConnections::Show.new(connection: @connection, login: login, health: sidecar_health)
   rescue DurableAgent::Error => error
     raise if error.is_a?(DurableAgent::Unavailable)
     redirect_to settings_chatgpt_connection_path, status: :see_other, alert: "That sign-in has expired." # unknown login id
@@ -32,9 +32,10 @@ class Settings::ChatgptConnectionsController < ApplicationController
       @connection = DurableAgent::Connection.new("openai")
     end
 
-    # The model the sidecar actually runs, which DURABLE_AGENT_MODEL in the sidecar's environment can override.
-    def running_model
-      DurableAgent.client.health["model"]&.values_at("provider", "modelId")&.join("/")
+    # The sidecar's /health: the model it actually runs (DURABLE_AGENT_MODEL in its environment can change it), its
+    # tools, and whether it has resumed. Nil when it is not running.
+    def sidecar_health
+      DurableAgent.client.health
     rescue DurableAgent::Error
       nil
     end

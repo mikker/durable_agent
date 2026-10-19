@@ -2,14 +2,14 @@ require "test_helper"
 
 class ChatTest < ActiveSupport::TestCase
   test "start creates the conversation on the sidecar, then the chat" do
-    stub_sidecar(create_conversation: sidecar_creates_conversation(900009))
+    fake_sidecar
 
     chat = Chat.start
 
     assert chat.persisted?
     assert_equal "New chat", chat.title
-    assert_equal DurableAgent::Conversation.find(900009), chat.conversation
     assert_equal 1, sidecar_calls(:create_conversation).size
+    assert chat.conversation.persisted?
   end
 
   test "start leaves no chat behind when the sidecar is down" do
@@ -21,7 +21,7 @@ class ChatTest < ActiveSupport::TestCase
   end
 
   test "say submits with a fresh request id and names a new chat after its first message" do
-    stub_sidecar(create_conversation: sidecar_creates_conversation(900009), submit: sidecar_accepts_submission)
+    fake_sidecar
     chat = Chat.start
 
     chat.say("Tell me a long story about a lighthouse keeper who finds a message in a bottle")
@@ -29,23 +29,22 @@ class ChatTest < ActiveSupport::TestCase
 
     assert_equal "Tell me a long story about a lighthouse keeper who finds ...", chat.reload.title
     calls = sidecar_calls(:submit)
-    assert_equal [ 900009, "Shorter, please" ], calls.last[1]
+    assert_equal [ chat.durable_agent_conversation_id, "Shorter, please" ], calls.last[1]
+    assert_equal 2, chat.conversation.submissions.count
     assert_equal 2, calls.map { |call| call[2][:request_id] }.uniq.size
     assert calls.all? { |call| call[2][:request_id].match?(/\A\h{8}-\h{4}-\h{4}-\h{4}-\h{12}\z/) }
   end
 
-  test "say on a named chat counts as activity" do
-    stub_sidecar(submit: sidecar_accepts_submission)
+  test "say on a named chat keeps its title" do
+    fake_sidecar
     chat = chats(:failed)
 
-    assert_changes -> { chat.reload.updated_at } do
-      chat.say("Hello?")
-    end
-    assert_equal "Are you there?", chat.title
+    chat.say("Hello?")
+    assert_equal "Are you there?", chat.reload.title
   end
 
   test "stop aborts the run" do
-    stub_sidecar(abort: { "ok" => true })
+    fake_sidecar
     chats(:poem).stop
     assert_equal [ [ :abort, [ 900002 ], {} ] ], sidecar_calls
   end
@@ -55,5 +54,18 @@ class ChatTest < ActiveSupport::TestCase
     assert chats(:poem).busy?
     assert_equal "Roses are red", DurableAgent::MessageText.text(chats(:poem).streaming_message)
     assert_equal "no_model", chats(:failed).last_failure.reason
+  end
+
+  test "last activity is the conversation's newest entry, else its creation" do
+    assert_equal durable_agent_entries(:answer).created_at, chats(:invoice).last_activity_at
+
+    fake_sidecar
+    chat = Chat.start
+    assert_equal chat.conversation.created_at, chat.last_activity_at
+    assert_not_nil chat.last_activity_at
+  end
+
+  test "by_last_activity orders by the conversations' newest entries" do
+    assert_equal chats(:invoice, :poem, :failed), Chat.by_last_activity.to_a
   end
 end
