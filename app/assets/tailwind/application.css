@@ -1,0 +1,3 @@
+/* Nitro Kit leads so its cascade layers and Tailwind theme aliases apply to the whole file. */
+@import "../builds/tailwind/nitro_kit";
+@import "tailwindcss";

@@ -1,0 +1,59 @@
+# `record` is pi-durable's EntryRecord as JSON text; kind, model and data live only there.
+<% json = ->(value) { value.to_json.to_json } %>
+system:
+  id: 900100
+  conversation_id: 900001
+  head: 900100
+  commit_seq: 1
+  record: <%= json.({ id: 900100, conversationId: 900001, kind: "pi.system", head: 900100,
+    model: [ { role: "system", content: "You are the assistant." } ] }) %>
+
+question:
+  id: 900101
+  conversation_id: 900001
+  commit_seq: 2
+  record: <%= json.({ id: 900101, conversationId: 900001, kind: "pi.user",
+    model: [ { role: "user", content: "What is invoice INV-1?" } ] }) %>
+
+answer_with_tool:
+  id: 900102
+  conversation_id: 900001
+  commit_seq: 3
+  record: <%= json.({ id: 900102, conversationId: 900001, kind: "pi.assistant", byTaskId: 900600,
+    model: [ { role: "assistant", content: [
+      { type: "thinking", thinking: "Look it up." },
+      { type: "text", text: "Let me look." },
+      { type: "toolCall", id: "call-1", name: "lookup_invoice", arguments: { number: "INV-1" } } ] } ] }) %>
+
+tool_result:
+  id: 900103
+  conversation_id: 900001
+  commit_seq: 4
+  record: <%= json.({ id: 900103, conversationId: 900001, kind: "pi.tool-result",
+    model: [ { role: "toolResult", toolCallId: "call-1", toolName: "lookup_invoice", isError: false,
+      content: [ { type: "text", text: '{"number":"INV-1","total":42}' } ] } ] }) %>
+
+answer:
+  id: 900104
+  conversation_id: 900001
+  commit_seq: 5
+  record: <%= json.({ id: 900104, conversationId: 900001, kind: "pi.assistant", data: { usage: { total: 12 } },
+    model: [ { role: "assistant", content: [ { type: "text", text: "INV-1 totals 42." } ] } ] }) %>
+
+busy_question:
+  id: 900201
+  conversation_id: 900002
+  commit_seq: 6
+  record: <%= json.({ id: 900201, conversationId: 900002, kind: "pi.user", model: [ { role: "user", content: "Write me a poem" } ] }) %>
+
+failed_answer:
+  id: 900301
+  conversation_id: 900003
+  commit_seq: 7
+  record: <%= json.({ id: 900301, conversationId: 900003, kind: "pi.assistant", model: [ { role: "assistant", content: "Earlier answer." } ] }) %>
+
+failed_question:
+  id: 900302
+  conversation_id: 900003
+  commit_seq: 8
+  record: <%= json.({ id: 900302, conversationId: 900003, kind: "pi.user", model: [ { role: "user", content: "Are you there?" } ] }) %>

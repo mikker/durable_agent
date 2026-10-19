@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title><%= content_for(:title) || "Slopdep" %></title>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="application-name" content="Slopdep">
+    <meta name="mobile-web-app-capable" content="yes">
+    <%= csrf_meta_tags %>
+    <%= csp_meta_tag %>
+    <%# Change events from the sidecar arrive as Turbo refreshes; morph them in and keep the scroll position. %>
+    <%= turbo_refreshes_with method: :morph, scroll: :preserve %>
+    <%= yield :head %>
+    <link rel="icon" href="/icon.png" type="image/png">
+    <link rel="icon" href="/icon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/icon.png">
+    <%= render NitroKit::AppearanceBootstrap.new(default: :system, nonce: content_security_policy_nonce) %>
+    <%# Nitro Kit is bundled into the compiled Tailwind stylesheet (app/assets/tailwind/application.css). %>
+    <%= stylesheet_link_tag "tailwind", "application", "data-turbo-track": "reload" %>
+    <%= javascript_importmap_tags %>
+  </head>
+  <body>
+    <%= render NitroKit::Toast::FlashMessages.new(flash: flash) %>
+    <%= yield %>
+  </body>
+</html>

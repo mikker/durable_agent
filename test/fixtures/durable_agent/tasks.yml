@@ -1,0 +1,20 @@
+<% json = ->(value) { value.to_json.to_json } %>
+busy_run:
+  id: 900601
+  conversation_id: 900002
+  kind: <%= "pi.run".to_json.to_json %>
+  status: running
+  abort_requested: 0
+  background: 0
+  record: <%= json.({ id: 900601, conversationId: 900002, kind: "pi.run", version: 1, input: { inputs: [ 900404 ] },
+    background: false, abortRequested: false, state: { status: "running" } }) %>
+
+idle_run:
+  id: 900600
+  conversation_id: 900001
+  kind: <%= "pi.run".to_json.to_json %>
+  status: terminal
+  abort_requested: 0
+  background: 0
+  record: <%= json.({ id: 900600, conversationId: 900001, kind: "pi.run", version: 1, input: { inputs: [ 900401 ] },
+    background: false, abortRequested: false, state: { status: "terminal", outcome: { kind: "ok" } } }) %>

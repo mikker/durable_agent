@@ -1,0 +1,122 @@
+/* Application CSS. Loads after the compiled Tailwind + Nitro Kit stylesheet. Only application-owned layout hooks
+   (data-ui) live here; Nitro components own their own geometry and theme. */
+
+/* Inset sidebar workspace, from the Nitro Kit "application-shell" catalog pattern. Scoped to data-ui hooks the
+   application owns: canvas insets, main scrolling, and the single content gutter. */
+@layer components {
+  :where([data-ui="application-shell"] > [data-slot="app-shell-main"]) {
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+
+  :where([data-ui="application-shell"][data-layout="sidebar"] [data-slot="app-navigation-header"]) {
+    flex-direction: column;
+    align-items: stretch;
+    gap: calc(var(--nk-space) * 3);
+    padding: calc(var(--nk-space) * 3);
+  }
+
+  :where([data-ui="application-shell"] [data-slot="app-navigation-footer"]) {
+    display: flex;
+    flex-direction: column;
+    gap: calc(var(--nk-space) * 3);
+  }
+
+  @media (width < 48rem) {
+    :where([data-ui="application-shell"] > [data-slot="app-shell-header"]:has([data-nk="toolbar"])) {
+      padding-block: calc(var(--nk-space) * 3);
+    }
+    :where([data-ui="application-shell"] [data-nk="toolbar"]) {
+      flex-direction: row;
+      align-items: center;
+    }
+    :where([data-ui="application-shell"] [data-slot="toolbar-trailing"]) {
+      margin-inline-start: auto;
+      justify-content: flex-end;
+    }
+  }
+
+  /* Navigation owns its rail padding, this shell owns the inset, and the content wrapper owns the only page gutter. */
+  :where([data-ui="application-shell-content"]) {
+    --page-gutter: calc(var(--nk-space) * 4);
+    padding: var(--page-gutter);
+  }
+
+  @media (width >= 48rem) {
+    :where([data-ui="application-shell"]) {
+      --workspace-inset: calc(var(--nk-space) * 3);
+      --nk-app-shell-background: color-mix(in oklab, var(--nk-color-muted) 15%, var(--nk-color-canvas));
+      --nk-app-shell-sidebar-background: transparent;
+      block-size: 100vh;
+      block-size: 100dvh;
+      padding: var(--workspace-inset);
+      grid-template-rows: auto minmax(0, 1fr);
+      column-gap: 0;
+      overflow: hidden;
+    }
+    :where([data-ui="application-shell"][data-layout="sidebar"]) {
+      padding-inline-start: 0;
+    }
+    :where([data-ui="application-shell"][data-layout="sidebar"] > [data-slot="app-shell-sidebar"]) {
+      position: static;
+      block-size: 100%;
+      border: 0;
+    }
+    :where([data-ui="application-shell"] > [data-slot="app-shell-main"]) {
+      background: var(--nk-color-surface);
+      border: var(--nk-border-width) solid var(--nk-color-border);
+      border-radius: var(--nk-radius-xl);
+      box-shadow: var(--nk-shadow-sm);
+    }
+    :where([data-ui="application-shell"][data-layout="sidebar"] > [data-slot="app-shell-header"] > [data-slot="app-shell-topbar"]) {
+      padding: calc(var(--nk-space) * 6);
+      background: var(--nk-color-surface);
+      border: var(--nk-border-width) solid var(--nk-color-border);
+      border-block-end: 0;
+      border-radius: var(--nk-radius-xl) var(--nk-radius-xl) 0 0;
+    }
+    :where([data-ui="application-shell"][data-layout="sidebar"] > [data-slot="app-shell-main"]) {
+      border-block-start: 0;
+      border-start-start-radius: 0;
+      border-start-end-radius: 0;
+    }
+    :where([data-ui="application-shell-content"]) {
+      --page-gutter: calc(var(--nk-space) * 6);
+    }
+  }
+}
+
+/* Application-owned chat layout. Nitro components own their own geometry; this only places them. */
+:where([data-ui="transcript"]) {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--nk-space) * 4);
+}
+:where([data-ui="entry"][data-role="user"]) {
+  align-self: flex-end;
+  max-inline-size: min(80%, 40rem);
+}
+:where([data-ui="entry"][data-role="assistant"], [data-ui="entry"][data-role="tool"]) {
+  max-inline-size: 48rem;
+}
+:where([data-ui="live"]:empty) {
+  display: none;
+}
+:where([data-ui="tool"] > summary) {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--nk-space) * 2);
+  color: var(--nk-color-muted-foreground, inherit);
+  font-size: 0.875rem;
+}
+:where([data-ui="tool"] > pre) {
+  margin-block-start: calc(var(--nk-space) * 2);
+  padding: calc(var(--nk-space) * 3);
+  border: var(--nk-border-width) solid var(--nk-color-border);
+  border-radius: var(--nk-radius-md);
+  background: var(--nk-color-muted);
+  font-size: 0.8125rem;
+  overflow: auto;
+  max-block-size: 24rem;
+}

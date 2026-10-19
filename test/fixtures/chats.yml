@@ -1,0 +1,14 @@
+# Each chat points at a conversation in test/fixtures/durable_agent/conversations.yml.
+invoice:
+  title: "What is invoice INV-1?"
+  durable_agent_conversation_id: 900001
+
+poem:
+  title: "Write me a poem"
+  durable_agent_conversation_id: 900002
+  updated_at: <%= 1.hour.ago.to_fs(:db) %>
+
+failed:
+  title: "Are you there?"
+  durable_agent_conversation_id: 900003
+  updated_at: <%= 1.day.ago.to_fs(:db) %>

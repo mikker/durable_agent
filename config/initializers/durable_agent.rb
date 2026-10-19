@@ -1,0 +1,29 @@
+DurableAgent.configure do |config|
+  # "provider/modelId". "faux/faux-1" runs a scripted offline model, handy in development and CI.
+  # DURABLE_AGENT_MODEL still wins, so `DURABLE_AGENT_MODEL=faux/faux-1 bin/dev` runs offline.
+  config.model = ENV["DURABLE_AGENT_MODEL"].presence || "openai/gpt-6.1-sol"
+
+  # Tools are DurableAgent::Tool subclasses. Give their names as strings so code reloading keeps working.
+  config.tools = %w[ CurrentTime ]
+
+  # Where the sidecar listens, and where it reaches this app for tools and change events.
+  # config.host = "127.0.0.1"
+  # config.port = 4010
+  # config.rails_url = "http://127.0.0.1:3000"
+
+  # The shared secret. Defaults to credentials.durable_agent.token, then ENV["DURABLE_AGENT_TOKEN"], and in
+  # development and test to a value derived from secret_key_base.
+  # config.token = "..."
+
+  # Called in this app's web process when the sidecar reports a change. The default refreshes every page
+  # subscribed with `turbo_stream_from conversation`.
+  # config.on_change = ->(conversation) { Turbo::StreamsChannel.broadcast_refresh_to(conversation) }
+  # config.on_report = ->(report) { Rails.logger.warn(report.message) }
+end
+
+# In production the sidecar calls this app over plain HTTP at rails_url (loopback by default). With
+# config.force_ssl, keep /durable_agent out of the HTTPS redirect; with config.hosts set, allow the sidecar's
+# host. In config/environments/production.rb:
+#
+#   config.ssl_options = { redirect: { exclude: ->(request) { request.path.start_with?("/durable_agent") } } }
+#   config.hosts << "127.0.0.1"
