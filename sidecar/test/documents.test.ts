@@ -11,6 +11,8 @@ import type {
 	Seq,
 	Storage,
 	StorageWrite,
+	TaskId,
+	TaskRecord,
 } from "@earendil-works/pi-durable";
 import { MemoryStorage } from "@earendil-works/pi-durable/storage/memory";
 import { createModels } from "@earendil-works/pi-ai/models";
@@ -66,14 +68,43 @@ test("a delta on a latest document is committed as a base and reads back the sam
 	const conversationId = await seedConversation(storage);
 	const id = await createDocument(storage, conversationId, "latest", { text: "Hel" });
 
-	await storage.commit([delta(id, "lo")], context);
+	const { owners } = await storage.commitWithOwners([delta(id, "lo")], context);
 
 	assert.deepEqual(batches.at(-1), [{ type: "document.change", id, content: { kind: "base", version: 1, value: { text: "Hello" } } }]);
 	const stored = await storage.document(id, "current", context);
 	assert.deepEqual(stored?.value, { text: "Hello" });
 	assert.equal(stored?.version, 1);
 	assert.equal(stored?.deltasSinceBase, 0);
-	assert.equal(await storage.conversationOf(id, context), conversationId);
+	assert.deepEqual(owners, [conversationId]);
+});
+
+test("a delta on a task-scoped document is committed as a base too", async () => {
+	const { memory, batches } = recording();
+	const storage = withBaseDocuments(memory);
+	const conversationId = await seedConversation(storage);
+	const taskId = await storage.mintId<TaskId>();
+	await storage.commit(
+		[
+			{
+				type: "task",
+				value: { id: taskId, conversationId, kind: "test.task", input: {}, state: { status: "pending" } } as unknown as TaskRecord<never, never, never>,
+			},
+		],
+		context,
+	);
+	const id = await storage.mintId<DocumentId>();
+	await storage.commit(
+		[{ type: "document.create", record: { id, kind: "test.task-doc", scope: { kind: "task", taskId } }, content: { kind: "base", version: 1, value: { text: "Hel" } } }],
+		context,
+	);
+
+	const { owners } = await storage.commitWithOwners([delta(id, "lo")], context);
+
+	assert.deepEqual(batches.at(-1), [{ type: "document.change", id, content: { kind: "base", version: 1, value: { text: "Hello" } } }]);
+	const stored = await storage.document(id, "current", context);
+	assert.deepEqual(stored?.value, { text: "Hello" });
+	assert.equal(stored?.deltasSinceBase, 0);
+	assert.deepEqual(owners, [], "a task document names no conversation");
 });
 
 test("the current value is not mutated by the rewrite", async () => {

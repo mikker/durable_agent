@@ -51,6 +51,28 @@ class DurableAgent::ClientTest < ActiveSupport::TestCase
     assert_match "unreachable", error.message
   end
 
+  test "a sidecar that hangs up mid-request raises Unavailable" do
+    FakeSidecar.serve("POST /conversations/7/abort" => [ :hang_up ], "GET /health" => [ :hang_up ]) do |sidecar|
+      assert_raises(DurableAgent::Unavailable, match: "unreachable") { client(sidecar).abort(7) }
+      assert_raises(DurableAgent::Unavailable) { client(sidecar).health }
+    end
+  end
+
+  test "a sidecar that is still starting is Unavailable" do
+    FakeSidecar.serve("POST /conversations/7/submissions" => [ 503, { error: "starting" } ], "POST /conversations/7/abort" => [ 503, { error: "other" } ]) do |sidecar|
+      error = assert_raises(DurableAgent::Unavailable) { client(sidecar).submit(7, "Hi", request_id: 1) }
+      assert_equal "sidecar is starting", error.message
+      assert_equal 503, error.status
+
+      error = assert_raises(DurableAgent::Error) { client(sidecar).abort(7) }
+      assert_not_kind_of DurableAgent::Unavailable, error
+    end
+  end
+
+  test "end of file, I/O errors and broken pipes are Unavailable" do
+    assert_empty [ EOFError, IOError, Errno::EPIPE ] - DurableAgent::Client::UNREACHABLE
+  end
+
   test "auth, login and tool routes" do
     routes = {
       "GET /auth" => [ 200, { openai: { type: "oauth" }, anthropic: nil } ],

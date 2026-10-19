@@ -73,7 +73,7 @@ export async function openHarness(
 	}
 
 	const registry = createRegistry();
-	// Loaded by the caller, in the background: boot must not wait for Rails.
+	// Loaded by the caller before it resumes the Harness (main.ts), while the HTTP server already answers.
 	const tools = new RailsTools(registry, config.railsUrl, config.token, toolsRetry);
 
 	const storage = new ChangeTracker(withBaseDocuments(await openHarnessStorage(db)), events);

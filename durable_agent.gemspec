@@ -1,5 +1,11 @@
 require_relative "lib/durable_agent/version"
 
+# The gem ships the bundled sidecar, which is not checked in. `rake build` bundles it, then packages; a bare
+# `gem build` would package whatever sidecar/dist holds, so it refuses when there is no bundle.
+if defined?(Gem::Commands::BuildCommand) && !File.exist?(File.expand_path("sidecar/dist/sidecar.js", __dir__))
+  abort "sidecar/dist/sidecar.js is missing: package the gem with `bundle exec rake build`, which bundles the sidecar first"
+end
+
 Gem::Specification.new do |spec|
   spec.name        = "durable_agent"
   spec.version     = DurableAgent::VERSION
@@ -20,7 +26,7 @@ Gem::Specification.new do |spec|
 
   spec.files = Dir.chdir(File.expand_path(__dir__)) do
     Dir["{app,config,db,lib}/**/*", "sidecar/dist/**/*", "sidecar/sql/**/*", "sidecar/package.json",
-        "MIT-LICENSE", "Rakefile", "README.md", "DESIGN.md"]
+        "MIT-LICENSE", "Rakefile", "README.md", "DESIGN.md", "CHANGELOG.md"]
   end
 
   spec.add_dependency "rails", ">= 8.0"

@@ -20,21 +20,30 @@ class DurableAgent::InstallGeneratorTest < Rails::Generators::TestCase
           reports credentials settings ].each do |table|
         assert_match "create_table :durable_agent_#{table}", migration
       end
-      assert_match "t.bigint :id, primary_key: true, default: nil", migration
+      assert_match "create_table :durable_agent_conversations do |t|", migration
+      assert_match %(t.datetime :created_at, null: false, default: -> { "CURRENT_TIMESTAMP" }), migration
+      assert_no_match "default: nil", migration
       assert_no_match "t.jsonb", migration
       assert_no_match "foreign_key", migration
     end
     assert_file "config/initializers/durable_agent.rb" do |initializer|
       assert_match "DurableAgent.configure", initializer
+      assert_match %(  # config.model = "openai/gpt-6.1-sol"), initializer
+      assert_no_match(/^\s*config\.model/, initializer)
+      assert_match "DURABLE_AGENT_MODEL", initializer
       assert_match "config.on_change", initializer
+      assert_match "config.on_auth", initializer
+      assert_match %(turbo_stream_from\n  # "durable_agent:reports"), initializer
+      assert_match "config.parent_record_class", initializer
       assert_match %(config.ssl_options = { redirect: { exclude: ->(request) { request.path.start_with?("/durable_agent") } } }), initializer
       assert_match "config.hosts", initializer
     end
     assert_file "config/routes.rb", %r{mount DurableAgent::Engine => "/durable_agent"}
     assert_file "Procfile.dev" do |procfile|
-      assert_equal "web: bin/rails server\nsidecar: bin/rails durable_agent:sidecar\n", procfile
+      assert_equal "web: bin/rails server -p 3000\nsidecar: bin/rails durable_agent:sidecar\n", procfile
     end
     assert_match "credentials:edit", output
+    assert_no_match "PORT=5000", output
     assert_no_match "relay", output
     assert_no_match "cable", output
   end
@@ -42,12 +51,23 @@ class DurableAgent::InstallGeneratorTest < Rails::Generators::TestCase
   test "appends the sidecar to an existing Procfile.dev once" do
     File.write File.join(destination_root, "Procfile.dev"), "web: bin/rails server -p 3000\ncss: bin/rails tailwindcss:watch\n"
 
-    run_generator
+    output = run_generator
     run_generator [ "--skip" ]
 
     assert_file "Procfile.dev" do |procfile|
       assert_equal "web: bin/rails server -p 3000\ncss: bin/rails tailwindcss:watch\nsidecar: bin/rails durable_agent:sidecar\n", procfile
     end
+    assert_no_match "PORT=5000", output
+  end
+
+  test "warns when the existing web process sets no port" do
+    File.write File.join(destination_root, "Procfile.dev"), "web: bin/rails server\ncss: bin/rails tailwindcss:watch\n"
+
+    output = run_generator
+
+    assert_match "foreman runs it on PORT=5000", output
+    assert_match "web: bin/rails server -p 3000", output
+    assert_file "Procfile.dev", "web: bin/rails server\ncss: bin/rails tailwindcss:watch\nsidecar: bin/rails durable_agent:sidecar\n"
   end
 
   test "the template matches the dummy app's migration" do

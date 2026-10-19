@@ -12,10 +12,10 @@ class DurableAgent::Document < DurableAgent::ApplicationRecord
   has_many :revisions, -> { order(:seq) }, dependent: nil
 
   scope :current, -> { where(retired_at: nil) }
-  scope :of_kind, ->(kind) { where(kind: kind.to_s.to_json) }
+  scope :of_kind, ->(kind) { where(kind: DurableAgent::IndexedString.encode(kind)) }
 
-  def kind = JSON.parse(super)
-  def key = (JSON.parse(key_value) if keyed?)
+  def kind = DurableAgent::IndexedString.decode(super)
+  def key = (DurableAgent::IndexedString.decode(key_value) if keyed?)
   def keyed? = family == 1
   def retired? = retired_at.present?
 

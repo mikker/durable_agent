@@ -2,7 +2,7 @@
 busy_run:
   id: 900601
   conversation_id: 900002
-  kind: <%= "pi.run".to_json.to_json %>
+  kind: <%= DurableAgent::IndexedString.encode("pi.run").to_json %>
   status: running
   abort_requested: 0
   background: 0
@@ -12,7 +12,7 @@ busy_run:
 idle_run:
   id: 900600
   conversation_id: 900001
-  kind: <%= "pi.run".to_json.to_json %>
+  kind: <%= DurableAgent::IndexedString.encode("pi.run").to_json %>
   status: terminal
   abort_requested: 0
   background: 0

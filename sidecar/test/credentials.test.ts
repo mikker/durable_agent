@@ -3,7 +3,7 @@ import { after, before, test } from "node:test";
 import { DbCredentialStore } from "../src/credentials.ts";
 import type { Db } from "../src/db/index.ts";
 import { createReporter } from "../src/reports.ts";
-import { installationDeviceId, readSchemaVersion, recordSchemaVersion, SCHEMA_VERSION } from "../src/settings.ts";
+import { checkSchemaVersion, installationDeviceId, readSchemaVersion, recordSchemaVersion, SCHEMA_VERSION } from "../src/settings.ts";
 import { openTestDatabase, TEST_DIALECT, until } from "./helpers.ts";
 
 let db: Db;
@@ -122,6 +122,42 @@ test("the schema version row is written once and never overwritten", async () =>
 	await db.run("UPDATE durable_agent_settings SET value = '2' WHERE key = 'schema_version'");
 });
 
+test("a stored schema version newer than this gem refuses to boot", async () => {
+	await recordSchemaVersion(db);
+	await db.run("UPDATE durable_agent_settings SET value = '3' WHERE key = 'schema_version'");
+	try {
+		await assert.rejects(checkSchemaVersion(db), /database is newer than this gem/);
+	} finally {
+		await db.run("UPDATE durable_agent_settings SET value = '2' WHERE key = 'schema_version'");
+	}
+});
+
+test("a stored schema version older than this gem boots with a warning to migrate", async (t) => {
+	const lines: string[] = [];
+	t.mock.method(process.stdout, "write", (line: unknown) => void lines.push(String(line)));
+	await recordSchemaVersion(db);
+	await db.run("UPDATE durable_agent_settings SET value = '1' WHERE key = 'schema_version'");
+	try {
+		await checkSchemaVersion(db);
+	} finally {
+		t.mock.restoreAll();
+		await db.run("UPDATE durable_agent_settings SET value = '2' WHERE key = 'schema_version'");
+	}
+	// The mock also catches the test runner's own output; only the log lines are JSON.
+	const warning = lines
+		.filter((line) => line.startsWith("{"))
+		.map((line) => JSON.parse(line) as Record<string, unknown>)
+		.find((entry) => entry.level === "warn");
+	assert.match(String(warning?.message), /run bin\/rails db:migrate/);
+	assert.equal(warning?.stored, 1);
+});
+
+test("a fresh database gets the current schema version and boots quietly", async () => {
+	await db.run("DELETE FROM durable_agent_settings WHERE key = 'schema_version'");
+	await checkSchemaVersion(db);
+	assert.equal(await readSchemaVersion(db), SCHEMA_VERSION);
+});
+
 test("a harness report is stored with its fields and its id handed to the events", async (t) => {
 	t.mock.method(process.stderr, "write", () => true);
 	const reported: number[] = [];
@@ -139,4 +175,17 @@ test("a harness report is stored with its fields and its id handed to the events
 	);
 	assert.equal((JSON.parse(String(row.info)) as { type: string }).type, "task_faulted");
 	assert.ok(row.created_at, "created_at is set");
+});
+
+test("settled() waits for a report's insert and its event, so shutdown cannot lose it", async (t) => {
+	t.mock.method(process.stderr, "write", () => true);
+	const reported: number[] = [];
+	const report = createReporter(db, { report: (id) => reported.push(id) });
+	report(new Error("raised just before shutdown"));
+	assert.equal(reported.length, 0, "the insert is still underway");
+	await report.settled();
+	t.mock.restoreAll();
+	assert.equal(reported.length, 1);
+	const row = await db.get<{ message: string }>("SELECT message FROM durable_agent_reports WHERE id = ?", reported[0] as number);
+	assert.equal(row?.message, "raised just before shutdown");
 });

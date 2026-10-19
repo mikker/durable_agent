@@ -31,9 +31,10 @@ export function parseModel(value: string): ModelRef {
 }
 
 export function loadConfig(source: Env = process.env): Config {
+	// Whitespace-only counts as unset, as Rails' `blank?` does: a token of spaces is refused by both halves.
 	const env = (name: string, fallback?: string): string => {
 		const value = source[name];
-		if (value !== undefined && value !== "") return value;
+		if (value !== undefined && value.trim() !== "") return value;
 		if (fallback !== undefined) return fallback;
 		throw new Error(`Missing required environment variable ${name}`);
 	};

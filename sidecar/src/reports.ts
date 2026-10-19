@@ -19,28 +19,41 @@ const describe = (error: unknown): string => (error instanceof Error ? error.mes
 
 const shape = (info: unknown): ReportShape => (typeof info === "object" && info !== null ? (info as ReportShape) : {});
 
-export function createReporter(db: Db, events: ReportEvents): (error: unknown, info?: unknown) => void {
-	return (error, info) => {
-		const report = shape(info);
-		const type = report.type ?? "error";
-		const message = describe(error);
-		log.error("harness report", { type, message, task: report.task, extension: report.extension, error });
+/** The Harness's `onReport`, plus `settled()`, which shutdown awaits so a report raised just before it is stored. */
+export type Reporter = ((error: unknown, info?: unknown) => void) & { settled(): Promise<void> };
 
-		void db
-			.get<{ id: number }>(
-				`INSERT INTO durable_agent_reports (type, conversation_id, task_id, task_kind, extension, message, info, created_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) RETURNING id`,
-				type,
-				report.task?.conversationId ?? report.conversationId ?? null,
-				report.task?.id ?? null,
-				report.task?.kind ?? null,
-				report.extension ?? null,
-				message,
-				JSON.stringify(report),
-			)
-			.then((row) => {
-				if (row !== undefined) events.report(Number(row.id));
-			})
-			.catch((failure) => log.error("report delivery failed", { error: failure }));
+export function createReporter(db: Db, events: ReportEvents): Reporter {
+	const inFlight = new Set<Promise<void>>();
+	const report = (error: unknown, info?: unknown): void => {
+		const shaped = shape(info);
+		const type = shaped.type ?? "error";
+		const message = describe(error);
+		log.error("harness report", { type, message, task: shaped.task, extension: shaped.extension, error });
+		const stored = store(db, events, type, message, shaped).finally(() => inFlight.delete(stored));
+		inFlight.add(stored);
 	};
+	return Object.assign(report, {
+		settled: async () => {
+			while (inFlight.size > 0) await Promise.all(inFlight);
+		},
+	});
+}
+
+async function store(db: Db, events: ReportEvents, type: string, message: string, report: ReportShape): Promise<void> {
+	try {
+		const row = await db.get<{ id: number }>(
+			`INSERT INTO durable_agent_reports (type, conversation_id, task_id, task_kind, extension, message, info, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) RETURNING id`,
+			type,
+			report.task?.conversationId ?? report.conversationId ?? null,
+			report.task?.id ?? null,
+			report.task?.kind ?? null,
+			report.extension ?? null,
+			message,
+			JSON.stringify(report),
+		);
+		if (row !== undefined) events.report(Number(row.id));
+	} catch (failure) {
+		log.error("report delivery failed", { error: failure });
+	}
 }

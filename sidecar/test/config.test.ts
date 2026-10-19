@@ -31,6 +31,10 @@ test("the environment maps onto the config, with the documented defaults", () =>
 	assert.equal(custom.railsUrl, "http://127.0.0.1:3000");
 
 	assert.throws(() => loadConfig({ DATABASE_URL: "postgres://localhost/x" }), /DURABLE_AGENT_TOKEN/);
+	for (const blank of ["", "   ", "\t\n"]) {
+		assert.throws(() => loadConfig({ DATABASE_URL: "postgres://localhost/x", DURABLE_AGENT_TOKEN: blank }), /DURABLE_AGENT_TOKEN/);
+	}
+	assert.equal(loadConfig({ DATABASE_URL: "postgres://localhost/x", DURABLE_AGENT_TOKEN: " s " }).token, " s ");
 	assert.throws(() => loadConfig({ DURABLE_AGENT_TOKEN: "s" }), /DATABASE_URL/);
 	const sqlite = loadConfig({ DATABASE_URL: "sqlite:///app/storage/development.sqlite3", DURABLE_AGENT_TOKEN: "s" });
 	assert.equal(sqlite.databaseUrl, "sqlite:///app/storage/development.sqlite3");

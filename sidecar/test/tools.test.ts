@@ -10,7 +10,9 @@ import { createModels } from "@earendil-works/pi-ai/models";
 import { createRegistry } from "@earendil-works/pi-durable";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { DbCredentialStore } from "../src/credentials.ts";
+import type { Db } from "../src/db/index.ts";
 import { RailsTools, type ToolDefinition } from "../src/tools.ts";
+import { testDatabaseUrl, until } from "./helpers.ts";
 import { bootTestSidecar, type TestSidecar } from "./sidecar.ts";
 
 const context = BACKGROUND_CONTEXT;
@@ -191,4 +193,100 @@ test("stop ends a boot retry that is waiting", async () => {
 	tools.stop();
 	assert.deepEqual(await loading, []);
 	assert.ok(Date.now() - started < 1_000);
+});
+
+// Recovery after a restart ------------------------------------------------------------------------------------------
+
+/** A Rails whose `slow_count` tool hangs until the caller goes away, until `answer` is set; tools are listed late. */
+const restartRails = async () => {
+	const state = { answer: false, listDelayMs: 0, calls: 0, called: false };
+	const definition: ToolDefinition = {
+		name: "slow_count",
+		description: "Count slowly",
+		parameters: { type: "object", properties: {} },
+		replay: "safe",
+	};
+	const server = createServer(async (request, response) => {
+		if (request.method === "GET" && request.url === "/durable_agent/tools") {
+			await new Promise((resolve) => setTimeout(resolve, state.listDelayMs));
+			response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify([definition]));
+			return;
+		}
+		if (request.method === "POST" && request.url === "/durable_agent/tools/slow_count") {
+			await readBody(request);
+			state.calls += 1;
+			state.called = true;
+			if (state.answer) {
+				response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ result: "counted to 42" }));
+				return;
+			}
+			// Hang, as a slow tool does, until the sidecar gives up on the call.
+			await new Promise((resolve) => request.socket.once("close", resolve));
+			return;
+		}
+		if (request.url === "/durable_agent/events") return void response.writeHead(204).end();
+		response.writeHead(404).end();
+	});
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+	return { state, url, close: () => new Promise((resolve) => server.close(resolve)) };
+};
+
+const scripted = (...messages: ReturnType<typeof fauxAssistantMessage>[]) => (db: Db) => {
+	const models = createModels({ credentials: new DbCredentialStore(db, "t") });
+	const faux = fauxProvider({ tokensPerSecond: 1000 });
+	models.setProvider(faux.provider);
+	faux.setResponses(messages);
+	return models;
+};
+
+test("a replay-safe tool call interrupted by a restart runs again once the tools are back", async () => {
+	const fake = await restartRails();
+	const databaseUrl = await testDatabaseUrl();
+	try {
+		const first = await bootTestSidecar({
+			databaseUrl,
+			config: { token: TOKEN, railsUrl: fake.url },
+			models: scripted(fauxAssistantMessage([fauxToolCall("slow_count", {}, { id: "call-slow" })], { stopReason: "toolUse" })),
+		});
+		const { harness, model } = first.opened;
+		const conversation = await harness.createConversation({ ownership: { kind: "ownerless" }, agent: { model } }, context);
+		const submission = await conversation.submit({ type: "input", content: "Count", requestId: "restart-1" }, context);
+		await until("the tool call to reach Rails", () => fake.state.called);
+		await first.close();
+
+		// Rails is slow to list its tools on the second boot; the run must not resume before they are installed.
+		fake.state.answer = true;
+		fake.state.listDelayMs = 500;
+		const second = await bootTestSidecar({
+			databaseUrl,
+			reset: false,
+			config: { token: TOKEN, railsUrl: fake.url },
+			models: scripted(fauxAssistantMessage([fauxText("It counted to 42.")])),
+		});
+		try {
+			const settled = await (await second.opened.harness.submission(submission.id, context))?.wait(context);
+			assert.equal(settled?.status, "done");
+			assert.equal(fake.state.calls, 2, "the call ran again after the restart");
+
+			type Message = { toolCallId?: string; isError?: boolean; content?: { text?: string }[] };
+			const rows = await second.db.all<{ record: string }>(
+				"SELECT record FROM durable_agent_entries WHERE conversation_id = ? ORDER BY id",
+				conversation.id,
+			);
+			const results = rows
+				.map((row) => JSON.parse(row.record) as { kind: string; model: Message[] })
+				.filter((entry) => entry.kind === "pi.tool-result")
+				.map((entry) => entry.model[0]);
+			assert.equal(results.length, 1);
+			assert.equal(results[0]?.toolCallId, "call-slow");
+			assert.equal(results[0]?.isError, false);
+			assert.equal(results[0]?.content?.[0]?.text, "counted to 42");
+			assert.doesNotMatch(rows.map((row) => row.record).join("\n"), /interrupted/);
+		} finally {
+			await second.close();
+		}
+	} finally {
+		await fake.close();
+	}
 });

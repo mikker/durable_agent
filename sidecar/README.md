@@ -17,7 +17,7 @@ By hand, from this directory: `cp .env.example .env`, edit, then `npm run dev` (
 | Variable | Meaning | Default |
 |---|---|---|
 | `DATABASE_URL` | the app's database, see below (required) | |
-| `DURABLE_AGENT_TOKEN` | shared bearer secret (required) | |
+| `DURABLE_AGENT_TOKEN` | shared bearer secret (required; whitespace-only counts as unset) | |
 | `DURABLE_AGENT_HOST`, `DURABLE_AGENT_PORT` | bind address | `127.0.0.1`, `4010` |
 | `DURABLE_AGENT_RAILS_URL` | where Rails answers `/durable_agent/tools` and `/durable_agent/events`; unset runs with neither | |
 | `DURABLE_AGENT_MODEL` | default model, `provider/modelId`; `faux/faux-1` is the scripted offline model | `openai/gpt-6.1-sol` |
@@ -27,6 +27,30 @@ By hand, from this directory: `cp .env.example .env`, edit, then `npm run dev` (
 
 `DURABLE_AGENT_STORAGE_PATH` and `DURABLE_AGENT_MIRROR_DOCS` are gone: there is no separate harness file and no
 mirror.
+
+### The process
+
+Boot (`src/main.ts`): check the gem schema version, open the Harness, ensure the root conversation, start the HTTP
+server, load the tool definitions from Rails (retrying for up to 60 s while Puma starts; with no Rails URL or after
+the retry gives up it runs with none), log `resuming with N tools`, then resume interrupted runs. Tools come first
+because pi-durable re-runs an interrupted `replay: "safe"` call only when the tool is registered at that moment.
+Until the resume, `GET /health` says `resumed: false` and submissions and aborts answer `503 {error: "starting"}`.
+`/health` also lists the installed `tools`.
+
+Refusals at boot, each exiting 1: a missing `durable_agent_*` table at any step (`MissingSchema`, "run bin/rails
+db:migrate"), and a gem schema version in `durable_agent_settings` newer than this sidecar's ("the database is newer
+than this gem"). An older one only logs a warning to migrate.
+
+Supervision: when pi-durable fails the session after a storage error (it closes the database too), the process logs
+the error and exits 1 for its supervisor to restart it; so does an uncaught exception. `/health` answers `503 {ok:
+false, error}` if asked in between.
+
+Shutdown on SIGTERM/SIGINT: stop the HTTP server (up to 10 s for requests underway), cancel logins, wait for report
+inserts in flight, close the Harness, flush change events, exit 0. After 30 s it gives up and exits 1; a second
+signal exits 1 at once.
+
+Change events posted to `/durable_agent/events` carry `conversations`, `reports` and, when a sign-in completed or a
+provider was signed out, `auth: [providers]`.
 
 ## Database
 
@@ -42,13 +66,23 @@ There is one copy of the state: pi-durable's own tables, in the app's database, 
 `src/db/` is the facade every module writes through: pi-durable's `SqliteDatabase` interface (`exec`, `run`,
 `get`, `all`, `transaction`, `close`, `?` placeholders, SQLite dialect) plus a `dialect` field.
 
-- **SQLite** is pi-durable's own `node:sqlite` adapter: WAL, `synchronous = NORMAL`, a 5 s busy timeout and
-  `BEGIN IMMEDIATE`, the same settings Rails 8 uses, so Puma and the sidecar share the file.
+- **SQLite** is pi-durable's own `node:sqlite` adapter: WAL, `synchronous = NORMAL` and `BEGIN IMMEDIATE`, the
+  same settings Rails 8 uses, so Puma and the sidecar share the file. `node:sqlite` waits for a lock synchronously
+  and stalls the event loop meanwhile, so its busy timeout is only 100 ms and `src/db/sqlite.ts` does the real
+  wait asynchronously: a transaction whose `BEGIN IMMEDIATE` finds the file locked (before its callback ran), or a
+  single `run`/`get`/`all` that does, is retried with backoff from 25 ms doubling to 500 ms for up to 30 s
+  (`SQLITE_BUSY_BUDGET_MS`), then fails with "SQLite database is locked: another writer held the write lock for
+  more than 30000 ms". Later operations still wait behind it. **No other writer may hold the SQLite write lock
+  longer than 30 s**: past that the storage call fails and pi-durable fails the session.
 - **Postgres** is `PostgresDatabase` over a `pg.Pool` of two. All operations run through one serial queue, as
   the SQLite adapter's do: a transaction checks out a client and runs `BEGIN` … `COMMIT` (or `ROLLBACK` and rethrow)
-  on it, and nothing else runs until it settles. Outside a transaction a statement that fails with a
-  connection-class error (`ECONNRESET`, `57P0x`, `08xxx`, "Connection terminated") is sent once more, and so is a
-  checkout or `BEGIN` that fails that way, because pi-durable treats a failed storage call as fatal to its session.
+  on it, and nothing else runs until it settles. The checked-out client carries an `error` listener from checkout
+  to release (pg-pool removes its own on checkout), so a connection dropped mid-transaction rejects the
+  transaction with the connection error and the broken client is discarded, instead of crashing the process.
+  Because pi-durable treats a failed storage call as fatal to its session, a checkout or `BEGIN` that fails with a
+  connection-class error (`ECONNRESET`, `57P0x`, `08xxx`, "Connection terminated") is tried once more, and so is a
+  statement outside a transaction, but only a `SELECT`: a write whose response was lost may have committed, so
+  `INSERT`, `UPDATE`, `DELETE`, CTEs and `exec` are never sent twice.
   `int8` parses to a JS number (ids and seqs are safe integers; `next_id` is text anyway). Connections run with
   `TimeZone=UTC` (added to the URL's `options`), because `CURRENT_TIMESTAMP` lands in `timestamp without time zone`
   columns that Rails reads as UTC.
@@ -75,6 +109,7 @@ Rails owns it: the gem's install migration (`lib/generators/durable_agent/instal
 creates every table on either adapter. The sidecar never runs schema changes. `openHarnessStorage(db)` (`src/storage.ts`):
 
 1. checks that `durable_agent_conversations` exists and otherwise throws `MissingSchema` ("run bin/rails db:migrate");
+   `main.ts` reports a missing table from any other boot step the same way;
 2. seeds the two singleton rows the migration leaves out, so a database loaded from `schema.rb` works:
    `durable_agent_durable_schema (1, CURRENT_SQLITE_SCHEMA_VERSION)` and
    `durable_agent_durable_metadata (1, next_id '2', next_seq 1)`, both `ON CONFLICT DO NOTHING`;

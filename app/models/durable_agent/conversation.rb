@@ -13,7 +13,19 @@ class DurableAgent::Conversation < DurableAgent::ApplicationRecord
   has_many :documents, -> { current.where(scope_kind: "conversation") }, foreign_key: :owner_id, dependent: nil
   belongs_to :owner, class_name: "DurableAgent::Conversation", foreign_key: :owner_conversation_id, optional: true
 
-  scope :top_level, -> { where(owner_conversation_id: nil) }
+  # The sidecar creates the root conversation (id 1) at boot, before any app asks for one.
+  ROOT_ID = 1
+
+  scope :top_level, -> { where(owner_conversation_id: nil).where.not(id: ROOT_ID) }
+
+  def self.root = find_by(id: ROOT_ID)
+
+  def root? = id == ROOT_ID
+
+  # The sidecar fills created_at from the column default when it inserts the row.
+  def last_activity_at
+    entries.maximum(:created_at) || created_at
+  end
 
   def parent
     DurableAgent::Conversation.find_by(id: record.dig("parent", "conversationId")) if record["parent"]
@@ -57,12 +69,14 @@ class DurableAgent::Conversation < DurableAgent::ApplicationRecord
   end
 
   # The sidecar commits the submission before it answers, so the row is there to find.
+  # Both clear the query cache, so busy?, live and transcript read what the sidecar committed.
   def say(content, request_id:, when_busy: nil)
     response = DurableAgent.client.submit(id, content, request_id: request_id, when_busy: when_busy)
+    DurableAgent.changed_by_sidecar
     submissions.find(response.fetch("id"))
   end
 
   def abort
-    DurableAgent.client.abort(id)
+    DurableAgent.client.abort(id).tap { DurableAgent.changed_by_sidecar }
   end
 end

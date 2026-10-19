@@ -3,7 +3,7 @@ module DurableAgent
     class MissingToken < StandardError; end
 
     attr_writer :model, :tools, :url, :rails_url, :token, :host, :port, :workspace_root, :agent_name,
-      :on_change, :on_report
+      :parent_record_class, :on_change, :on_report, :on_auth
 
     # Defaults come from the same DURABLE_AGENT_* variables the sidecar reads, so `DURABLE_AGENT_PORT=4020 bin/dev`
     # moves both halves at once.
@@ -12,8 +12,13 @@ module DurableAgent
     def port = @port || env("PORT", 4010).to_i
     def url = @url || "http://#{host}:#{port}"
     def rails_url = @rails_url || env("RAILS_URL", "http://127.0.0.1:3000")
-    def workspace_root = @workspace_root || Rails.root.join("storage/durable_agent").to_s
-    def agent_name = @agent_name || Rails.application.class.module_parent_name
+    def workspace_root = @workspace_root || env("WORKSPACE_ROOT", Rails.root.join("storage/durable_agent").to_s)
+    def agent_name = @agent_name || env("NAME", Rails.application.class.module_parent_name)
+
+    # The class DurableAgent::ApplicationRecord inherits from. An app whose ApplicationRecord uses connects_to sets
+    # it to "ApplicationRecord", so the harness models follow its roles and shards. Read when the models load, so
+    # set it in an initializer.
+    def parent_record_class = @parent_record_class || "ActiveRecord::Base"
 
     # Entries may be classes or class names. Names are resolved on every call so they survive code reloading.
     def tools
@@ -38,8 +43,16 @@ module DurableAgent
       @on_change || ->(conversation) { Turbo::StreamsChannel.broadcast_refresh_to(conversation) }
     end
 
+    # A report without a conversation (a failed session, most reports on pi-durable 1.3.0) refreshes the pages
+    # subscribed with `turbo_stream_from "durable_agent:reports"`.
     def on_report
-      @on_report || ->(report) { Turbo::StreamsChannel.broadcast_refresh_to(report.conversation) if report.conversation }
+      @on_report || ->(report) { Turbo::StreamsChannel.broadcast_refresh_to(report.conversation || "durable_agent:reports") }
+    end
+
+    # Called with the provider ids when a sign-in completes or a provider signs out. The default refreshes the
+    # pages subscribed with `turbo_stream_from "durable_agent:auth"`, such as a settings page.
+    def on_auth
+      @on_auth || ->(providers) { Turbo::StreamsChannel.broadcast_refresh_to("durable_agent:auth") }
     end
 
     private

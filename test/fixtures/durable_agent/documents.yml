@@ -4,9 +4,9 @@
 
 idle_live:
   id: 900501
-  kind: <%= "pi.live".to_json.to_json %>
+  kind: <%= DurableAgent::IndexedString.encode("pi.live").to_json %>
   family: 0
-  key_value: <%= "".to_json.to_json %>
+  key_value: <%= DurableAgent::IndexedString.encode("").to_json %>
   scope_kind: conversation
   owner_id: 900001
   created_at: 1
@@ -14,9 +14,9 @@ idle_live:
 
 idle_retired_inbox:
   id: 900502
-  kind: <%= "pi.inbox".to_json.to_json %>
+  kind: <%= DurableAgent::IndexedString.encode("pi.inbox").to_json %>
   family: 0
-  key_value: <%= "".to_json.to_json %>
+  key_value: <%= DurableAgent::IndexedString.encode("").to_json %>
   scope_kind: conversation
   owner_id: 900001
   created_at: 1
@@ -25,9 +25,9 @@ idle_retired_inbox:
 
 busy_live:
   id: 900503
-  kind: <%= "pi.live".to_json.to_json %>
+  kind: <%= DurableAgent::IndexedString.encode("pi.live").to_json %>
   family: 0
-  key_value: <%= "".to_json.to_json %>
+  key_value: <%= DurableAgent::IndexedString.encode("").to_json %>
   scope_kind: conversation
   owner_id: 900002
   created_at: 1
@@ -35,9 +35,9 @@ busy_live:
 
 busy_inbox:
   id: 900504
-  kind: <%= "pi.inbox".to_json.to_json %>
+  kind: <%= DurableAgent::IndexedString.encode("pi.inbox").to_json %>
   family: 0
-  key_value: <%= "".to_json.to_json %>
+  key_value: <%= DurableAgent::IndexedString.encode("").to_json %>
   scope_kind: conversation
   owner_id: 900002
   created_at: 1
@@ -45,9 +45,9 @@ busy_inbox:
 
 forked_notes:
   id: 900505
-  kind: <%= "app.notes".to_json.to_json %>
+  kind: <%= DurableAgent::IndexedString.encode("app.notes").to_json %>
   family: 0
-  key_value: <%= "".to_json.to_json %>
+  key_value: <%= DurableAgent::IndexedString.encode("").to_json %>
   scope_kind: conversation
   owner_id: 900004
   created_at: 9

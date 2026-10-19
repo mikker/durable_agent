@@ -7,6 +7,8 @@ require "socket"
 #     DurableAgent::Client.new(url: sidecar.url, token: "t").create_conversation
 #     sidecar.requests.first # => { method: "POST", path: "/conversations", headers: {...}, body: {...} }
 #   end
+#
+# A route answered with :hang_up closes the connection without a response, as a sidecar that dies mid-request.
 class FakeSidecar
   attr_reader :requests
 
@@ -42,6 +44,8 @@ class FakeSidecar
       @requests << { method: method, path: path, headers: headers, body: body.empty? ? nil : JSON.parse(body) }
 
       status, payload = @routes.fetch("#{method} #{path}") { [ 404, { error: "not found" } ] }
+      return if status == :hang_up
+
       json = payload.to_json
       socket.write "HTTP/1.1 #{status} X\r\nContent-Type: application/json\r\nContent-Length: #{json.bytesize}\r\nConnection: close\r\n\r\n#{json}"
     ensure

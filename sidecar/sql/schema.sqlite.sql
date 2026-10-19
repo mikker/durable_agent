@@ -1,46 +1,49 @@
 -- durable_agent schema v2 for SQLite: a hand rendering of the gem's install migration
 -- (lib/generators/durable_agent/install/templates/create_durable_agent_tables.rb.tt) for the sidecar tests.
--- Rails owns the real schema; a Ruby test keeps the table and column names here in step with the migration.
+-- Rails owns the real schema; test/lib/durable_agent/sidecar_schema_test.rb runs both against fresh databases and
+-- compares tables, column types, nullability and defaults, and index definitions.
 -- The first nine tables are pi-durable 1.3.0's schema (version 1) under the durable_agent_ prefix, minus STRICT
 -- and the json_valid checks. No rows: the sidecar seeds the singletons at boot.
 
 CREATE TABLE IF NOT EXISTS durable_agent_durable_schema (
-  singleton integer NOT NULL PRIMARY KEY,
+  singleton integer PRIMARY KEY AUTOINCREMENT NOT NULL,
   version integer NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS durable_agent_durable_metadata (
-  singleton integer NOT NULL PRIMARY KEY,
+  singleton integer PRIMARY KEY AUTOINCREMENT NOT NULL,
   next_id text NOT NULL,
   next_seq bigint NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS durable_agent_record_ids (
-  id bigint NOT NULL PRIMARY KEY,
+  id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
   record_type text NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS durable_agent_conversations (
-  id bigint NOT NULL PRIMARY KEY,
+  id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
   owner_conversation_id bigint,
   owner_task_id bigint,
-  record text NOT NULL
+  record text NOT NULL,
+  created_at datetime(6) DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 CREATE INDEX IF NOT EXISTS durable_agent_conversations_by_owner_conversation ON durable_agent_conversations (owner_conversation_id, id);
 CREATE INDEX IF NOT EXISTS durable_agent_conversations_by_owner_task ON durable_agent_conversations (owner_task_id, id);
 
 CREATE TABLE IF NOT EXISTS durable_agent_entries (
-  id bigint NOT NULL PRIMARY KEY,
+  id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
   conversation_id bigint NOT NULL,
   head bigint,
   commit_seq bigint NOT NULL,
-  record text NOT NULL
+  record text NOT NULL,
+  created_at datetime(6) DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 CREATE INDEX IF NOT EXISTS durable_agent_entries_by_conversation ON durable_agent_entries (conversation_id, id DESC);
 CREATE INDEX IF NOT EXISTS durable_agent_entry_heads_by_conversation ON durable_agent_entries (conversation_id, id DESC) WHERE head IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS durable_agent_tasks (
-  id bigint NOT NULL PRIMARY KEY,
+  id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
   conversation_id bigint NOT NULL,
   kind text NOT NULL,
   status text NOT NULL,
@@ -55,18 +58,19 @@ CREATE INDEX IF NOT EXISTS durable_agent_tasks_by_abort_requested ON durable_age
 CREATE INDEX IF NOT EXISTS durable_agent_tasks_by_background ON durable_agent_tasks (background, id);
 
 CREATE TABLE IF NOT EXISTS durable_agent_submissions (
-  id bigint NOT NULL PRIMARY KEY,
+  id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
   conversation_id bigint NOT NULL,
   request_id text,
   status text NOT NULL,
-  record text NOT NULL
+  record text NOT NULL,
+  created_at datetime(6) DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 CREATE INDEX IF NOT EXISTS durable_agent_submissions_by_request ON durable_agent_submissions (conversation_id, request_id);
 CREATE INDEX IF NOT EXISTS durable_agent_submissions_by_conversation ON durable_agent_submissions (conversation_id, id);
 CREATE INDEX IF NOT EXISTS durable_agent_submissions_by_status ON durable_agent_submissions (status, id);
 
 CREATE TABLE IF NOT EXISTS durable_agent_documents (
-  id bigint NOT NULL PRIMARY KEY,
+  id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
   kind text NOT NULL,
   family integer NOT NULL,
   key_value text NOT NULL,

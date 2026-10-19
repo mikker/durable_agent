@@ -1,6 +1,6 @@
 # Something Rails handed to a conversation: queued, placed as an entry, then done (answered) or unanswered.
 # `request_id` is the id Rails chose, so a retried request finds the same submission. pi-durable stores it
-# JSON-encoded ("\"42\""), so lookups encode it too.
+# JSON-encoded ("\"42\""), as JSON.stringify writes it, so lookups encode it the same way.
 class DurableAgent::Submission < DurableAgent::ApplicationRecord
   include DurableAgent::HarnessRecord
 
@@ -13,7 +13,7 @@ class DurableAgent::Submission < DurableAgent::ApplicationRecord
   scope :pending, -> { where(status: %w[ queued placed ]) }
   scope :settled, -> { where(status: %w[ done unanswered ]) }
   scope :unanswered, -> { where(status: "unanswered") }
-  scope :for_request, ->(request_id) { where(request_id: request_id.to_s.to_json) }
+  scope :for_request, ->(request_id) { where(request_id: DurableAgent::IndexedString.encode(request_id)) }
 
   # Why an input went unanswered, for people. pi-durable reasons: no_model, run_failed, aborted, withdrawn...
   REASONS = {
@@ -23,7 +23,7 @@ class DurableAgent::Submission < DurableAgent::ApplicationRecord
   }.freeze
 
   def request_id
-    JSON.parse(super) if super
+    DurableAgent::IndexedString.decode(super) if super
   end
 
   def type = record["type"] # "input" or "write"

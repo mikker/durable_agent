@@ -9,6 +9,8 @@ module DurableAgent
       source_root File.expand_path("templates", __dir__)
 
       SIDECAR = "sidecar: bin/rails durable_agent:sidecar"
+      # foreman gives the first process PORT=5000; the sidecar reaches Rails at rails_url, port 3000 by default.
+      WEB = "web: bin/rails server -p 3000"
 
       def self.next_migration_number(dirname)
         ActiveRecord::Generators::Base.next_migration_number(dirname)
@@ -31,9 +33,10 @@ module DurableAgent
         procfile = File.join(destination_root, "Procfile.dev")
 
         if !File.exist?(procfile)
-          create_file "Procfile.dev", "web: bin/rails server\n#{SIDECAR}\n"
-        elsif !File.read(procfile).include?(SIDECAR)
-          append_to_file "Procfile.dev", "#{SIDECAR}\n", force: true
+          create_file "Procfile.dev", "#{WEB}\n#{SIDECAR}\n"
+        else
+          append_to_file "Procfile.dev", "#{SIDECAR}\n", force: true unless File.read(procfile).include?(SIDECAR)
+          warn_about_web_port File.read(procfile)
         end
       end
 
@@ -54,6 +57,19 @@ module DurableAgent
           force_ssl or config.hosts, see the note at the end of config/initializers/durable_agent.rb.
         TEXT
       end
+
+      private
+        def warn_about_web_port(procfile)
+          web = procfile[/^web:.*$/]
+          if web && web !~ /\s(-p|--port)[\s=]?\d+/
+            say <<~TEXT, :yellow
+
+              Procfile.dev's web process sets no port: foreman runs it on PORT=5000, but the sidecar calls this app at
+              config.rails_url, http://127.0.0.1:3000 by default. Change the line to `#{WEB}`,
+              or set DURABLE_AGENT_RAILS_URL=http://127.0.0.1:5000.
+            TEXT
+          end
+        end
     end
   end
 end

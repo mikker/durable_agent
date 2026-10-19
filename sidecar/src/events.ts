@@ -1,5 +1,6 @@
 // Change events (DESIGN.md, "Change events"). After each commit the tracker names the conversations it touched;
-// `Events` batches them with new report ids and posts `{conversations, reports}` to Rails, which refreshes pages.
+// `Events` batches them with new report ids and changed sign-ins and posts `{conversations, reports, auth?}` to
+// Rails, which refreshes pages.
 // Events are a hint: the state is in the database, so a failed post is retried once and then dropped.
 import type { Context } from "@earendil-works/chord/context";
 import type { ConversationId, Seq, Storage, StorageWrite } from "@earendil-works/pi-durable";
@@ -27,7 +28,8 @@ const realTimers: Timers = {
 	clearTimeout: (handle) => clearTimeout(handle as NodeJS.Timeout),
 };
 
-type Batch = { readonly conversations: number[]; readonly reports: number[] };
+/** `auth` is left out when no sign-in changed. */
+type Batch = { readonly conversations: number[]; readonly reports: number[]; readonly auth?: string[] };
 
 export class Events {
 	readonly #url: URL | undefined;
@@ -36,6 +38,7 @@ export class Events {
 	readonly #timers: Timers;
 	readonly #conversations = new Set<number>();
 	readonly #reports = new Set<number>();
+	readonly #auth = new Set<string>();
 	readonly #inFlight = new Set<Promise<void>>();
 	#timer: unknown;
 
@@ -59,6 +62,13 @@ export class Events {
 		this.#schedule();
 	}
 
+	/** A provider was signed in or out. */
+	auth(provider: string): void {
+		if (this.#url === undefined) return;
+		this.#auth.add(provider);
+		this.#schedule();
+	}
+
 	/** Send whatever is pending now and wait for every post, retries included. */
 	async flush(): Promise<void> {
 		if (this.#timer !== undefined) {
@@ -79,10 +89,15 @@ export class Events {
 	}
 
 	#send(): void {
-		if (this.#conversations.size === 0 && this.#reports.size === 0) return;
-		const batch: Batch = { conversations: [...this.#conversations], reports: [...this.#reports] };
+		if (this.#conversations.size === 0 && this.#reports.size === 0 && this.#auth.size === 0) return;
+		const batch: Batch = {
+			conversations: [...this.#conversations],
+			reports: [...this.#reports],
+			...(this.#auth.size === 0 ? {} : { auth: [...this.#auth] }),
+		};
 		this.#conversations.clear();
 		this.#reports.clear();
+		this.#auth.clear();
 		const delivery = this.#deliver(batch).finally(() => this.#inFlight.delete(delivery));
 		this.#inFlight.add(delivery);
 	}
@@ -114,7 +129,11 @@ export class Events {
 
 export type ChangeSink = Pick<Events, "changed">;
 
-/** Wraps `commit` to announce the conversations each successful commit touched. Task writes are ignored. */
+/**
+ * Wraps `commit` to announce the conversations each successful commit touched. Task writes are ignored. Owners are
+ * resolved before the commit (see `commitWithOwners`), and nothing after the commit can reject it: the batch is
+ * durable by then, and pi-durable would treat a rejection as a failed session.
+ */
 export interface ChangeTracker extends Storage {}
 // The interface declares the read methods the constructor binds through to `inner`.
 export class ChangeTracker {
@@ -128,37 +147,35 @@ export class ChangeTracker {
 	}
 
 	async commit(writes: readonly StorageWrite[], context: Context): Promise<Seq> {
-		// A retired document can no longer be read back, so its owner is resolved before the commit.
-		const retired = await this.#owners(writes.filter((write) => write.type === "document.retire"), context);
-		const seq = await this.#inner.commit(writes, context);
-		const touched = await this.#owners(writes.filter((write) => write.type !== "document.retire"), context);
-		for (const id of new Set([...retired, ...touched])) this.#events.changed(id);
+		const { seq, owners } = await this.#inner.commitWithOwners(writes, context);
+		try {
+			for (const id of new Set([...directOwners(writes), ...owners])) this.#events.changed(id);
+		} catch (error) {
+			log.warn("change event not queued after a commit", { error });
+		}
 		return seq;
 	}
+}
 
-	async #owners(writes: readonly StorageWrite[], context: Context): Promise<ConversationId[]> {
-		const ids: (ConversationId | undefined)[] = [];
-		for (const write of writes) {
-			switch (write.type) {
-				case "conversation":
-					ids.push(write.value.id);
-					break;
-				case "entry":
-				case "submission":
-					ids.push(write.value.conversationId);
-					break;
-				case "document.create":
-				case "document.copy":
-					if (write.record.scope.kind === "conversation") ids.push(write.record.scope.conversationId);
-					break;
-				case "document.change":
-				case "document.retire":
-					ids.push(await this.#inner.conversationOf(write.id, context));
-					break;
-				case "task":
-					break;
-			}
+/** The conversations a batch names without a read; document changes and retirements are resolved by the wrapper. */
+function directOwners(writes: readonly StorageWrite[]): ConversationId[] {
+	const ids: ConversationId[] = [];
+	for (const write of writes) {
+		switch (write.type) {
+			case "conversation":
+				ids.push(write.value.id);
+				break;
+			case "entry":
+			case "submission":
+				ids.push(write.value.conversationId);
+				break;
+			case "document.create":
+			case "document.copy":
+				if (write.record.scope.kind === "conversation") ids.push(write.record.scope.conversationId);
+				break;
+			default:
+				break;
 		}
-		return ids.filter((id) => id !== undefined);
 	}
+	return ids;
 }

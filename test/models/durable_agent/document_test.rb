@@ -11,6 +11,14 @@ class DurableAgent::DocumentTest < ActiveSupport::TestCase
       DurableAgent::Document.of_kind("pi.live").order(:id).to_a
   end
 
+  test "kinds and keys with characters Rails would escape match the sidecar's encoding" do
+    DurableAgent::Document.insert({ id: 900590, kind: %("app.<notes>&co"), family: 1, key_value: %("é😀 & <b>"),
+      scope_kind: "conversation", owner_id: 900004, created_at: 12, record: %({"id":900590}) })
+
+    document = DurableAgent::Document.of_kind("app.<notes>&co").sole
+    assert_equal [ "app.<notes>&co", "é😀 & <b>" ], [ document.kind, document.key ]
+  end
+
   test "value is the content of the newest base revision" do
     assert_equal "Roses are red", durable_agent_documents(:busy_live).value.dig("generation", "message", "content", 0, "text")
     assert_equal({}, durable_agent_documents(:idle_live).value)

@@ -46,9 +46,33 @@ class DurableAgent::SidecarTest < ActiveSupport::TestCase
     assert_equal "postgres:///app?host=%2Fvar%2Frun%2Fpostgresql", postgres_url(host: "/var/run/postgresql", database: "app")
   end
 
-  test "postgres url carries sslmode" do
-    assert_equal "postgres://db.internal/app?sslmode=require", postgres_url(host: "db.internal", database: "app", sslmode: "require")
+  test "postgres url carries sslmode, with libpq's require given to node as no-verify" do
+    assert_equal "postgres://db.internal/app?sslmode=no-verify", postgres_url(host: "db.internal", database: "app", sslmode: "require")
     assert_equal "postgres:///app?host=%2Ftmp&sslmode=disable", postgres_url(host: "/tmp", database: "app", sslmode: "disable")
+    assert_equal "postgres://db.internal/app?sslmode=verify-full", postgres_url(host: "db.internal", database: "app", sslmode: "verify-full")
+    assert_equal "postgres://db.internal/app?sslmode=verify-ca", postgres_url(host: "db.internal", database: "app", sslmode: :"verify-ca")
+  end
+
+  test "postgres url carries certificate paths, relative ones resolved against Rails.root" do
+    url = postgres_url(host: "db.internal", database: "app", sslmode: "verify-full", sslrootcert: "config/ca.pem",
+      sslcert: "/etc/ssl/client.crt", sslkey: "/etc/ssl/client.key")
+
+    assert_equal "postgres://db.internal/app?sslmode=verify-full&sslrootcert=#{ERB::Util.url_encode(Rails.root.join("config/ca.pem").to_s)}" \
+      "&sslcert=%2Fetc%2Fssl%2Fclient.crt&sslkey=%2Fetc%2Fssl%2Fclient.key", url
+  end
+
+  test "postgres url carries schema_search_path as a startup option" do
+    url = postgres_url(database: "app", schema_search_path: %("$user", public, shared))
+
+    assert_equal "postgres://localhost/app?options=-c%20search_path%3D%22%24user%22%2Cpublic%2Cshared", url
+    assert_equal %(-c search_path="$user",public,shared), URI.decode_www_form_component(url[/options=(.*)/, 1])
+  end
+
+  test "an explicit postgres url passes through, with sslmode=require given to node as no-verify" do
+    config = ->(url) { ActiveRecord::DatabaseConfigurations::UrlConfig.new("production", "primary", url, {}) }
+
+    assert_equal "postgres://u:p@h:1/d?sslmode=no-verify&x=1", DurableAgent::Sidecar.database_url(config.("postgres://u:p@h:1/d?sslmode=require&x=1"))
+    assert_equal "postgres://u:p@h:1/d?sslmode=verify-full", DurableAgent::Sidecar.database_url(config.("postgres://u:p@h:1/d?sslmode=verify-full"))
   end
 
   test "sqlite url is the absolute path, relative ones resolved against Rails.root" do

@@ -33,11 +33,14 @@ export class Logins {
 	readonly #deviceId: () => string;
 	readonly #agentName: string;
 	readonly #pending = new Map<string, Pending>();
+	readonly #changed: (provider: string) => void;
 
-	constructor(models: Models, deviceId: () => string, agentName: string) {
+	/** `changed` hears of every completed sign-in and every sign-out (main.ts posts it to Rails as an auth event). */
+	constructor(models: Models, deviceId: () => string, agentName: string, changed: (provider: string) => void = () => {}) {
 		this.#models = models;
 		this.#deviceId = deviceId;
 		this.#agentName = agentName;
+		this.#changed = changed;
 	}
 
 	/** Every provider's connection state: `undefined` when no credentials are configured. */
@@ -105,6 +108,7 @@ export class Logins {
 			.then(() => {
 				login.status = "done";
 				log.info("provider connected", { provider });
+				this.#changed(provider);
 			})
 			.catch((error: unknown) => {
 				login.status = "failed";
@@ -146,6 +150,7 @@ export class Logins {
 
 	async logout(provider: string): Promise<void> {
 		await this.#models.logout(provider);
+		this.#changed(provider);
 	}
 
 	/** Cancel every pending login, for shutdown. */

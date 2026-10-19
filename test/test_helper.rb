@@ -5,6 +5,7 @@ require_relative "../test/dummy/config/environment"
 ActiveRecord::Migrator.migrations_paths = [ File.expand_path("../test/dummy/db/migrate", __dir__) ]
 require "rails/test_help"
 require "turbo/broadcastable/test_helper"
+require "durable_agent/test_helper"
 
 Dir[File.expand_path("support/**/*.rb", __dir__)].each { |file| require file }
 
@@ -14,7 +15,7 @@ module ActiveSupport
     self.file_fixture_path = File.expand_path("fixtures/files", __dir__)
     fixtures :all
 
-    include SidecarStubs
+    include DurableAgent::TestHelper
     include Turbo::Broadcastable::TestHelper
   end
 end

@@ -49,43 +49,44 @@ Rails DDL; `test/dummy/db/migrate` carries the same file. The first nine tables 
 schema (`storage/sqlite/migrations.js`, version 1) rendered for Rails under the prefix: the same table names,
 columns, indexes and partial index, so pi-durable's storage core runs over them unchanged. Deliberate
 differences from pi-durable's own DDL: no `STRICT`, no `json_valid` checks, `record` and `content` are `text`
-holding JSON (never `jsonb`, which rejects `\u0000` and would turn a model output into a fatal commit), integer
-ids are `bigint`. The `singleton` primary keys get an autoincrement on both adapters, which is harmless because
-the sidecar always writes `1`.
+holding JSON (never `jsonb`, which rejects `\u0000` and would turn a model output into a fatal commit), and
+`created_at` on conversations, entries and submissions. Ids and singletons use Rails' default primary key:
+`integer PRIMARY KEY AUTOINCREMENT` on SQLite, a rowid alias as in pi-durable's own `INTEGER PRIMARY KEY`;
+`bigserial` on Postgres, whose sequence goes unused because the sidecar supplies every id (and always writes
+singleton `1`). `created_at` is `DEFAULT CURRENT_TIMESTAMP`: pi-durable's inserts name their columns and its
+submission upsert updates named columns only, so the database fills it once, at insert (UTC on both: SQLite's
+`CURRENT_TIMESTAMP` is UTC, and the sidecar's Postgres connections run with `TimeZone=UTC`). Because both
+adapters dump these keys the same way, `schema.rb` loads to the migration's schema on either.
 
 ```ruby
-create_table :durable_agent_durable_schema, id: false do |t|
-  t.integer :singleton, primary_key: true
+create_table :durable_agent_durable_schema, primary_key: :singleton do |t|
   t.integer :version, null: false
 end
-create_table :durable_agent_durable_metadata, id: false do |t|
-  t.integer :singleton, primary_key: true
+create_table :durable_agent_durable_metadata, primary_key: :singleton do |t|
   t.text :next_id, null: false            # pi stores it as text: ids may exceed 2^53 in principle
   t.bigint :next_seq, null: false
 end
-create_table :durable_agent_record_ids, id: false do |t|
-  t.bigint :id, primary_key: true, default: nil
+create_table :durable_agent_record_ids do |t|
   t.text :record_type, null: false        # conversation | entry | task | submission | document
 end
-create_table :durable_agent_conversations, id: false do |t|
-  t.bigint :id, primary_key: true, default: nil
+create_table :durable_agent_conversations do |t|
   t.bigint :owner_conversation_id
   t.bigint :owner_task_id
   t.text :record, null: false             # ConversationRecord JSON: {id, parent?: {conversationId, at}, owner?, ...}
+  t.datetime :created_at, null: false, default: -> { "CURRENT_TIMESTAMP" }
   t.index [ :owner_conversation_id, :id ], name: "durable_agent_conversations_by_owner_conversation"
   t.index [ :owner_task_id, :id ], name: "durable_agent_conversations_by_owner_task"
 end
-create_table :durable_agent_entries, id: false do |t|
-  t.bigint :id, primary_key: true, default: nil
+create_table :durable_agent_entries do |t|
   t.bigint :conversation_id, null: false
   t.bigint :head
   t.bigint :commit_seq, null: false
   t.text :record, null: false             # EntryRecord JSON: {id, conversationId, kind, data?, model?, head?, byTaskId?}
+  t.datetime :created_at, null: false, default: -> { "CURRENT_TIMESTAMP" }
   t.index [ :conversation_id, :id ], order: { id: :desc }, name: "durable_agent_entries_by_conversation"
   t.index [ :conversation_id, :id ], order: { id: :desc }, name: "durable_agent_entry_heads_by_conversation", where: "head IS NOT NULL"
 end
-create_table :durable_agent_tasks, id: false do |t|
-  t.bigint :id, primary_key: true, default: nil
+create_table :durable_agent_tasks do |t|
   t.bigint :conversation_id, null: false
   t.text :kind, null: false               # JSON-encoded string, e.g. "\"pi.run\""
   t.text :status, null: false             # pending | running | waiting | completing | terminal
@@ -98,18 +99,17 @@ create_table :durable_agent_tasks, id: false do |t|
   t.index [ :abort_requested, :id ], name: "durable_agent_tasks_by_abort_requested"
   t.index [ :background, :id ], name: "durable_agent_tasks_by_background"
 end
-create_table :durable_agent_submissions, id: false do |t|
-  t.bigint :id, primary_key: true, default: nil
+create_table :durable_agent_submissions do |t|
   t.bigint :conversation_id, null: false
   t.text :request_id                      # JSON-encoded string, e.g. "\"42\""; NULL when the harness made it
   t.text :status, null: false             # queued | placed | done | unanswered
   t.text :record, null: false             # SubmissionRecord JSON: {id, conversationId, requestId?, type, status, entry?, answer?, reason?, detail?}
+  t.datetime :created_at, null: false, default: -> { "CURRENT_TIMESTAMP" }
   t.index [ :conversation_id, :request_id ], name: "durable_agent_submissions_by_request"
   t.index [ :conversation_id, :id ], name: "durable_agent_submissions_by_conversation"
   t.index [ :status, :id ], name: "durable_agent_submissions_by_status"
 end
-create_table :durable_agent_documents, id: false do |t|
-  t.bigint :id, primary_key: true, default: nil
+create_table :durable_agent_documents do |t|
   t.text :kind, null: false               # JSON-encoded string, e.g. "\"pi.live\""
   t.integer :family, null: false          # 0 = unkeyed, 1 = keyed
   t.text :key_value, null: false          # JSON-encoded key, "\"\"" when unkeyed
@@ -157,7 +157,15 @@ end
 No foreign keys: pi-durable writes rows in its own order inside one transaction. The migration contains no
 data; the sidecar seeds the two singleton rows at boot, so a database loaded from `schema.rb` works.
 `sidecar/sql/schema.sqlite.sql` and `schema.postgres.sql` are SQL renderings of the same tables for the
-sidecar's tests; a Ruby test keeps their table and column names in step with the migration.
+sidecar's tests. A Ruby test runs the migration and the matching file against fresh databases of each adapter
+and compares tables, primary keys, column types, nullability and defaults, and index definitions (name,
+columns, order, predicate, uniqueness); it also checks that the test database loaded from `schema.rb` equals the
+migration's.
+
+Indexed strings (`tasks.kind`, `documents.kind`, `documents.key_value`, `submissions.request_id`) hold the
+JSON encoding JavaScript's `JSON.stringify` produces, which escapes only `"`, `\` and control characters.
+Rails encodes them with `DurableAgent::IndexedString` (`JSON.generate`), never `to_json`, which escapes `&`, `<`,
+`>` and U+2028 and would find nothing.
 
 ## Sidecar
 
@@ -166,15 +174,30 @@ sidecar's tests; a Ruby test keeps their table and column names in step with the
 - `db/index.ts`: `type Dialect = "postgres" | "sqlite"`; `interface Db extends SqliteDatabase { readonly dialect }`
   (`SqliteDatabase` is pi-durable's facade: `exec`, `run`, `get`, `all`, `transaction`, `close`, `?`
   placeholders); `openDatabase(url)` picks the adapter by scheme (`postgres:`/`postgresql:`, `sqlite:`/`sqlite3:`).
-- `db/sqlite.ts`: pi-durable's `openNodeSqliteDatabase` (WAL, `synchronous = NORMAL`, 5 s busy timeout, the
-  same settings Rails 8 uses, so Puma and the sidecar share one file).
+- `db/sqlite.ts`: pi-durable's `openNodeSqliteDatabase` (WAL, `synchronous = NORMAL`, `BEGIN IMMEDIATE`, the
+  same settings Rails 8 uses, so Puma and the sidecar share one file) behind a serial queue of its own.
+  `node:sqlite` waits for a lock synchronously, stalling the event loop, so its busy timeout is 100 ms
+  (`SQLITE_BUSY_TIMEOUT_MS`) and the real wait is asynchronous: a `transaction` whose `BEGIN IMMEDIATE` fails
+  with `SQLITE_BUSY` before the callback has run, and a `run`/`get`/`all` that fails busy (an autocommit statement
+  that has not run), are retried with backoff (25 ms doubling to 500 ms) for up to `SQLITE_BUSY_BUDGET_MS`
+  (30 s), then rejected with "SQLite database is locked: another writer held the write lock for more than …".
+  A busy error after the callback started, and `exec` (a script may have partly committed), are not retried.
+  Later operations wait behind the retrying one. Operational rule: no other writer (Puma, a console, a backup) may
+  hold the SQLite write lock longer than 30 s, or the session fails.
 - `db/postgres.ts`: `PostgresDatabase` over a `pg.Pool` (max 2). `int8` is parsed to a JS number (ids and seqs
   are safe integers; `next_id` is text). Every operation runs through one serial queue, as pi-durable's node
   adapter does: a `transaction` checks out a client, `BEGIN`s, runs the callback on an executor bound to that
-  client, then `COMMIT`s or `ROLLBACK`s and rethrows; everything else waits. Outside a transaction a
-  connection-class error (`ECONNRESET`, `57P01`, `08*`) is retried once, because pi-durable treats a storage error
-  as fatal to the session. Connections run with `TimeZone=UTC` so `CURRENT_TIMESTAMP` matches Rails' timestamp
-  columns. The pool logs idle-client errors.
+  client, then `COMMIT`s or `ROLLBACK`s and rethrows; everything else waits. pg-pool drops its idle `error`
+  listener on checkout, so the checked-out client carries the adapter's own `error` listener from checkout to
+  release: a dropped connection rejects the pending query and every later one (the transaction rejects with the
+  connection error, without a `ROLLBACK`), and the client is released broken so the pool discards it; it is never
+  an uncaught exception. Single statements go through `pool.query`, which guards its checkout the same way.
+  Retries, because pi-durable treats a storage error as fatal to the session: a checkout or `BEGIN` that fails
+  with a connection-class error (`ECONNRESET`, `57P01`, `08*`, "Connection terminated") is retried once, since
+  nothing has run; outside a transaction only a statement that starts with `SELECT` (after leading comments) is
+  sent once more, because a lost response may hide a committed write. `INSERT`/`UPDATE`/`DELETE`, CTEs and `exec`
+  are never repeated, and nothing inside a transaction is. Connections run with `TimeZone=UTC` so
+  `CURRENT_TIMESTAMP` matches Rails' timestamp columns. The pool logs idle-client errors.
 - `db/translate.ts`: the storage core speaks SQLite; `toPostgres(sql)` turns `?` into `$1, $2, …` (never inside
   a literal), `INSERT OR IGNORE INTO …` into `INSERT INTO … ON CONFLICT DO NOTHING` (before any `RETURNING`),
   drops ` STRICT` and `CHECK (json_valid(x))`. `excluded.col`, `ON CONFLICT(id) DO UPDATE`, partial indexes and
@@ -187,7 +210,10 @@ sidecar's tests; a Ruby test keeps their table and column names in step with the
   `CREATE TABLE IF NOT EXISTS` for the version table still reaches the database, so on Postgres the role needs
   `CREATE` on the schema. Closing the storage closes the database handle.
 - `settings.ts`: `installationDeviceId`, `recordSchemaVersion` (`"2"`, do nothing if present),
-  `readSchemaVersion`, `readHarnessSchemaVersion`, `SCHEMA_VERSION = 2`.
+  `readSchemaVersion`, `readHarnessSchemaVersion`, `SCHEMA_VERSION = 2`. `checkSchemaVersion` runs first at boot:
+  it records the version on a fresh database, refuses to boot when the stored version is greater than
+  `SCHEMA_VERSION` ("the database is newer than this gem"), and logs a warning ("run bin/rails db:migrate") but
+  boots when it is lower.
 - `credentials.ts`: `DbCredentialStore(db, token)`, pi-ai's `CredentialStore` over the facade. Each credential is
   stored as `{"enc": 1, "type", "iv", "tag", "data"}`: AES-256-GCM with the provider id as associated data,
   keyed by HKDF-SHA256(token, salt `durable_agent_credentials`, info `v1`). `type` stays clear for `GET /auth`.
@@ -197,7 +223,9 @@ sidecar's tests; a Ruby test keeps their table and column names in step with the
   the next modify. Modifications to one provider are serialized.
 - `reports.ts`: `createReporter(db, events)` stores Harness reports (faulted tasks, hook errors, a failed session)
   with `RETURNING id` and `CURRENT_TIMESTAMP`, then `events.report(id)`. pi-durable 1.3.0 calls `onReport(error)`
-  with one argument; the `info` of newer releases is read when present.
+  with one argument; the `info` of newer releases is read when present. The reporter tracks its inserts in flight;
+  `reporter.settled()` waits for all of them and their `events.report`, and shutdown awaits it before closing the
+  Harness, so a report raised just before a signal is stored and delivered.
 
 SQL in `settings.ts`, `credentials.ts` and `reports.ts` is written once in the SQLite dialect and translated on
 Postgres like the core's.
@@ -207,13 +235,20 @@ Postgres like the core's.
 pi-durable stores a document as a base revision plus chord deltas and checkpoints a new base only when the
 document's definition says so (`pi.live`: when idle; `pi.inbox`: when empty). Rails would have to replay chord
 deltas to read a streaming `pi.live`. `withBaseDocuments(inner)` wraps `commit(writes)`: for each
-`document.change` carrying a delta whose document has `history: "latest"` (every `pi.*` document Rails reads:
-live, inbox, usage, provider; `pi.agent` is `rewindable` but always checkpoints) it reads
-`inner.document(id, "current")`, applies the ops with `apply` from `@earendil-works/chord/delta` on a structured
+`document.change` carrying a delta whose document keeps only its current value (the storage core's own
+`isCurrentOnly`: `scope.kind !== "conversation" || history === "latest"`, so every session and task document and
+every `latest` conversation document, which covers every `pi.*` document Rails reads: live, inbox, usage, provider;
+`pi.agent` is `rewindable` but always checkpoints) it reads `inner.document(id, "current")`, applies the ops with `apply` from `@earendil-works/chord/delta` on a structured
 clone, and replaces the write with `{kind: "base", version, value}`. The storage core deletes the previous
-revisions of a `latest` document on a base, so such a document always has exactly one revision row. Commits
+revisions of a current-only document on a base, so such a document always has exactly one revision row. Commits
 through the wrapper are serialized so the read and the commit cannot interleave. Deltas on `rewindable`
-documents pass through. The Harness sees the same value and version either way.
+conversation documents pass through. The Harness sees the same value and version either way. A failed read of the
+current value fails the commit: without it there is no base to write.
+
+The wrapper also resolves, before the commit and inside the same serialized step, the conversation owning each
+`document.change` and `document.retire` (`commitWithOwners`): from a cache filled by creates and copies, from the
+rewrite's own read of the record, or else from `inner.document`. A failed owner read is logged at `warn` and that
+document is left out of the change event; the commit goes ahead.
 
 The rule Rails relies on: **the current value of a document is the content of its newest `base` revision, and no
 `delta` follows it for any document Rails reads.** If one does, `DurableAgent::Document#value` raises
@@ -221,38 +256,54 @@ The rule Rails relies on: **the current value of a document is the content of it
 
 ### Change events (`events.ts`)
 
-`ChangeTracker` wraps `commit(writes)` too: after `inner.commit` resolves it collects the conversation ids
-touched: `conversation` writes, `entry` and `submission` writes (`value.conversationId`),
-`document.create`/`document.copy` with a conversation scope, and `document.change`/`document.retire` through a
-read-through cache from document id to conversation id (filled by creates and by the base-rewrite read; a miss
-reads `inner.document`; retirements are resolved before the commit). `task` writes are ignored.
+`ChangeTracker` wraps `commit(writes)` too, and the change path never decides a commit's fate: every owner is known
+before `inner.commit` runs, and nothing after it can reject. It announces the conversation ids touched:
+`conversation` writes, `entry` and `submission` writes (`value.conversationId`), `document.create`/`document.copy`
+with a conversation scope, and the owners of `document.change`/`document.retire` that the base-document wrapper
+resolved before the commit (see above). `task` writes are ignored. Queuing the ids runs after the commit inside a
+`try` that logs at `warn` and returns the commit's seq regardless.
 
 `Events` debounces for 100 ms (a steady stream still posts every 100 ms) and does
-`POST {RAILS_URL}/durable_agent/events` with the bearer token and `{"conversations": [7, 9], "reports": [3]}`.
+`POST {RAILS_URL}/durable_agent/events` with the bearer token and `{"conversations": [7, 9], "reports": [3],
+"auth": ["openai"]}`. `auth` names the providers whose sign-in changed (a login reached `done`, or `DELETE
+/auth/:provider` signed one out) and is left out when there are none.
 A non-2xx or network error is retried once after 1 s, then logged at `warn` and dropped: events are a hint, the
 state is in the database, and the next event or page load shows it. Unset `DURABLE_AGENT_RAILS_URL` disables
 events with one boot log line. `flush()` is awaited on shutdown, after the Harness has closed.
 
 ### Boot and shutdown (`main.ts`)
 
-Open the database from `DATABASE_URL` → record the gem schema version → credential store and models → device
-id → logins → Harness over `ChangeTracker(withBaseDocuments(openHarnessStorage(db)))` → ensure the root
-conversation → `resume()` → load tools in the background → serve. A missing table anywhere in that sequence is
-reported as `MissingSchema` and the process exits 1. Shutdown: stop the server, dispose logins, close the
-Harness (which commits nothing new and closes the database), flush events, exit 0. Unhandled rejections are
-logged, not fatal.
+Open the database from `DATABASE_URL` → check the gem schema version → credential store and models → device id →
+logins → Harness over `ChangeTracker(withBaseDocuments(openHarnessStorage(db)))` → ensure the root conversation →
+serve → load tools (awaited, with the bounded boot retry; a failure or an unset Rails URL falls through with no
+tools) → log "resuming with N tools" → `resume()`. Every step up to the root conversation runs inside one handler:
+a missing table at any of them (SQLite "no such table", Postgres `42P01`, also as a cause) is reported as
+`MissingSchema` ("run bin/rails db:migrate") and the process exits 1; any other boot error exits 1 too. Until
+`resume()` has run, `/health` reports `resumed: false` and submissions and aborts answer `503 {error: "starting"}`,
+because either would start pi-durable's scheduler before the tools are installed.
+
+Supervision: main watches `harness.closed`. When the session ends with `{reason: "failed", error}` (pi-durable
+closes it, database included, after the first failed storage call) it logs the error and exits 1 so a supervisor
+restarts the process; a clean close outside our own shutdown exits 1 as well. An uncaught exception is logged and
+exits 1. Unhandled rejections are logged, not fatal.
+
+Shutdown on SIGTERM or SIGINT: stop the server and wait up to 10 s for requests underway (then close their
+connections), dispose logins, await `reporter.settled()`, close the Harness (which commits nothing new and closes
+the database), flush events, exit 0. The whole shutdown has a 30 s deadline, after which the process logs and
+exits 1; a second SIGTERM or SIGINT during shutdown exits 1 at once. A signal during the tool load stops it and
+the Harness is not resumed.
 
 ### HTTP API v1 (`server.ts`)
 
 JSON bodies, `Authorization: Bearer <token>` on everything except `/health`, compared in constant time. Unknown
-routes 404.
+routes 404. The login routes with an `:id` answer 404 unless that login belongs to `:provider`.
 
 | Method | Path | Request | Response |
 |---|---|---|---|
-| GET | `/health` | | `200 {ok: true, schemaVersion: 2, harnessSchemaVersion: 1, database: "postgres" \| "sqlite", model: {provider, modelId}}` |
+| GET | `/health` | | `200 {ok: true, schemaVersion: 2, harnessSchemaVersion: 1, database: "postgres" \| "sqlite", model: {provider, modelId}, tools: [names], resumed: boolean}`; `503 {ok: false, error}` once the Harness has closed |
 | POST | `/conversations` | `{model?: {provider, modelId}, instructions?}` | `201 {id}`; `422 {error, suggestions: [ids]}` for an unknown model |
-| POST | `/conversations/:id/submissions` | `{content, request_id, when_busy?: "followUp" \| "steer" \| "reject"}` | `202 {id, status}`; `404`; `409 {error: "conversation_busy"}` |
-| POST | `/conversations/:id/abort` | | `200 {ok: true}` |
+| POST | `/conversations/:id/submissions` | `{content, request_id, when_busy?: "followUp" \| "steer" \| "reject"}` | `202 {id, status}`; `404`; `409 {error: "conversation_busy"}`; `503 {error: "starting"}` before resume |
+| POST | `/conversations/:id/abort` | | `200 {ok: true}`; `503 {error: "starting"}` before resume |
 | GET | `/auth` | | `200 {"<provider>": {type: "oauth" \| "api_key"} \| null, ...}` |
 | POST | `/auth/:provider/logins` | | `201 <login>`; `422 <login>` when it failed at once |
 | GET | `/auth/:provider/logins/:id` | | `200 <login>`; `404` |
@@ -278,8 +329,8 @@ variables, so setting one of these in the shell moves both halves.
 
 | Variable | Meaning | Default |
 |---|---|---|
-| `DATABASE_URL` | the app's primary database: `postgres://…` (plus `?host=` for a socket directory and `?sslmode=` when `database.yml` sets it) or `sqlite:///absolute/path/to/development.sqlite3` | rendered from `database.yml` |
-| `DURABLE_AGENT_TOKEN` | shared bearer secret | `DurableAgent.config.token` |
+| `DATABASE_URL` | the app's primary database: `postgres://…` (plus `?host=` for a socket directory, and `sslmode`, `sslrootcert`, `sslcert`, `sslkey` and `options=-c search_path=…` when `database.yml` sets them; see `Sidecar.database_url`) or `sqlite:///absolute/path/to/development.sqlite3` | rendered from `database.yml` |
+| `DURABLE_AGENT_TOKEN` | shared bearer secret; required, and a whitespace-only value counts as unset (both halves refuse it) | `DurableAgent.config.token` |
 | `DURABLE_AGENT_HOST`, `DURABLE_AGENT_PORT` | bind address | `127.0.0.1`, `4010` |
 | `DURABLE_AGENT_RAILS_URL` | where Rails answers `/durable_agent/tools` and `/durable_agent/events`; unset runs without tools or events | `http://127.0.0.1:3000` |
 | `DURABLE_AGENT_MODEL` | default model as `provider/modelId`; `faux/faux-1` is the scripted offline model | `openai/gpt-6.1-sol` |
@@ -293,9 +344,11 @@ Tools are Ruby classes; the sidecar is generic.
 
 1. At boot and on `POST /tools/reload` the sidecar does `GET {RAILS_URL}/durable_agent/tools` with the bearer
    token and expects `200 [{name, description, parameters: <JSON Schema object>, replay: "safe" | "unsafe"}]`.
-   At boot a failed fetch is retried in the background with backoff (500 ms doubling to 10 s) for up to 60 s,
-   because `bin/dev` starts node before Puma listens; then it logs a warning and runs with no tools until the
-   next reload. A successful reload ends the retry early.
+   At boot a failed fetch is retried with backoff (500 ms doubling to 10 s) for up to 60 s, because `bin/dev`
+   starts node before Puma listens; then it logs a warning and runs with no tools until the next reload. A
+   successful reload ends the retry early. The HTTP server answers meanwhile, but the Harness resumes only after
+   this load: pi-durable re-runs an interrupted `replay: "safe"` call only when the tool is registered at the
+   moment the run resumes, and otherwise settles it as interrupted for good.
 2. Each definition becomes a pi-durable tool. Executing it does `POST {RAILS_URL}/durable_agent/tools/:name` with
    `{arguments, conversation_id, call_id}`. `200 {result}` → the tool output is `result` when it is a string,
    else `JSON.stringify(result)`. Any other status with `{error}` → an error result carrying the message.
@@ -319,15 +372,27 @@ DurableAgent.configure { |config| config.tools = [ LookupInvoice ] }
 `DurableAgent::Tool.tool_name` is the underscored class name. `to_definition` returns the hash above. Param
 types: `:string`, `:integer`, `:number`, `:boolean`, `:array`, `:object`. `DurableAgent::ToolsController`
 (engine routes `GET /tools`, `POST /tools/:name`) authenticates the bearer token against
-`DurableAgent.config.token`, returns 404 for an unknown tool, 422 `{error}` for any `StandardError` raised by
-`call` (message included), and sets `DurableAgent::Current.conversation_id` / `call_id` during the call.
+`DurableAgent.config.token`, returns 404 for an unknown tool, and sets `DurableAgent::Current.conversation_id` /
+`call_id` during the call. Errors answer 422 `{error}`, and `error` is what the model sees: the message for
+`ArgumentError` (bad arguments), `ActiveRecord::RecordNotFound` and `DurableAgent::Tool::Error` (which tools raise
+with a message meant for the model); for any other `StandardError` only `"<ErrorClass> while running <tool>"`,
+with the error itself sent to `Rails.error.report`, so messages carrying SQL, paths or secrets stay in the app.
 
 ## Events endpoint
 
 `POST /durable_agent/events` (engine route `events#create`), same bearer check as tools. Body
-`{"conversations": [ids], "reports": [ids]}`. For each conversation that exists, `config.on_change.call(conversation)`;
-for each report, `config.on_report.call(report)`. Unknown ids are skipped. Callback errors go to
+`{"conversations": [ids], "reports": [ids], "auth": ["openai"]}`, every key optional. For each conversation that
+exists, `config.on_change.call(conversation)`; for each report, `config.on_report.call(report)`; when `auth` names
+providers, `config.on_auth.call(providers)` once. Unknown ids are skipped. Callback errors go to
 `Rails.error.report` and never fail the request. Responds 204.
+
+The bearer check (tools and events) wants exactly `Authorization: Bearer <token>`: the scheme is case-sensitive,
+then one space, then the token, compared in constant time. A bare token or any other form is 401.
+
+The default callbacks broadcast Turbo refreshes from Puma: `on_change` to the conversation (`turbo_stream_from
+conversation`); `on_report` to `report.conversation`, or to the stream `"durable_agent:reports"` when the report
+has none (every report on pi-durable 1.3.0); `on_auth` to the stream `"durable_agent:auth"`, which a settings page
+subscribes to with `turbo_stream_from "durable_agent:auth"`.
 
 ## Ruby API
 
@@ -339,14 +404,19 @@ DurableAgent.configure do |config|
   config.host, config.port                  # defaults DURABLE_AGENT_HOST / DURABLE_AGENT_PORT, then 127.0.0.1:4010
   config.rails_url = "http://127.0.0.1:3000" # default DURABLE_AGENT_RAILS_URL
   config.token = "..."                      # default below
-  config.workspace_root, config.agent_name
+  config.workspace_root, config.agent_name  # defaults DURABLE_AGENT_WORKSPACE_ROOT / DURABLE_AGENT_NAME, then the table's
+  config.parent_record_class = "ApplicationRecord" # DurableAgent::ApplicationRecord's superclass; default "ActiveRecord::Base"
   config.on_change = ->(conversation) { ... }   # default: Turbo::StreamsChannel.broadcast_refresh_to(conversation)
-  config.on_report = ->(report) { ... }         # default: refresh broadcast to report.conversation when present
+  config.on_report = ->(report) { ... }         # default: refresh report.conversation, else "durable_agent:reports"
+  config.on_auth = ->(providers) { ... }        # default: refresh "durable_agent:auth"
 end
 
 DurableAgent.start(model: nil, instructions: nil)   # => DurableAgent::Conversation (created on the sidecar, then found)
 DurableAgent.conversation(id)
-DurableAgent.auth                                   # => {"openai" => {"type" => "oauth"}, "anthropic" => nil}
+DurableAgent.auth   # => {"openai" => {"type" => "oauth", "source" => "OAuth"},
+                    #     "anthropic" => {"type" => "api_key", "source" => "ANTHROPIC_API_KEY"}, "google" => nil, ...}
+                    # every provider pi-ai knows, signed in or not, plus "faux" when it is the sidecar's model;
+                    # `source` is pi-ai's: "OAuth", "stored credential", or the environment variable it read
 
 conversation.say("Hello", request_id: message.id, when_busy: nil)   # => DurableAgent::Submission (persisted)
 conversation.abort
@@ -354,26 +424,36 @@ conversation.transcript                              # Array of visible entries,
 conversation.entries / submissions / tasks / reports / documents
 conversation.document("pi.live") / live / busy? / streaming_message / running_tools / inbox / last_failure
 conversation.parent / parent_at                      # from record["parent"]: the parent Conversation and the Entry it forked at
+conversation.created_at / last_activity_at           # the row's insert time; the newest entry's created_at, else created_at
+DurableAgent::Conversation.root / top_level          # the root the sidecar creates at boot (id 1); the others no task owns
 
 DurableAgent::Connection.new("openai").connected? / subscription? / unreachable? / error / start_login / login(id) / complete_login(id, url) / cancel_login(id) / disconnect
 ```
 
 Models in `app/models/durable_agent/`, all `readonly?`, all over the tables above, inheriting
-`DurableAgent::ApplicationRecord` and the `HarnessRecord` concern (table name prefix, read-only):
+`DurableAgent::ApplicationRecord` and the `HarnessRecord` concern (table name prefix, read-only).
+`DurableAgent::ApplicationRecord` inherits from `config.parent_record_class`, resolved when the models load; an
+app whose `ApplicationRecord` uses `connects_to` sets it to `"ApplicationRecord"` so role and shard switching apply.
+`DurableAgent.start`, `Conversation#say` and `#abort` clear the query cache once the sidecar has answered, so
+`busy?`, `live` and `transcript` read its commit in the same request. `DurableAgent.start` cannot join the caller's
+transaction (the sidecar commits on its own connection): when the app's own record fails to save afterwards, the
+conversation remains, unreferenced.
 
-- `Conversation`: `attribute :record, :json`; `top_level` scope is `owner_conversation_id: nil`;
+- `Conversation`: `attribute :record, :json`; `top_level` scope is `owner_conversation_id: nil` without the root
+  (id 1, which the sidecar creates at boot; `Conversation.root` returns it); `created_at` is a column and
+  `last_activity_at` the newest entry's `created_at`, else the conversation's;
   `has_many :entries / :submissions / :tasks / :reports` on `conversation_id` (own rows only; a forked
   conversation's inherited entries are not followed); `documents` is `Document.current.where(scope_kind:
   "conversation", owner_id: id)`; `document(kind)` returns that document's `value` or `{}`. `say` returns
   `submissions.find(response["id"])`. `last_failure` is the newest `unanswered` submission whose `entry_id` is
   greater than the id of the newest `pi.assistant` entry, or any unanswered one when there is no answer yet.
 - `Entry`: `attribute :record, :json`; `kind`, `data`, `model`, `head`, `by_task_id` come from the record (there
-  are no such columns). Scopes `chronologically` / `reverse_chronologically` on id. `HIDDEN_KINDS =
+  are no such columns); `created_at` is a column. Scopes `chronologically` / `reverse_chronologically` on id. `HIDDEN_KINDS =
   %w[pi.system pi.reset]`, `visible?`, `user?`, `assistant?`, `tool_result?`, `compaction?`, `messages`, `text`,
   `tool_calls`, `thinking?`, `tool_name`, `error?`. Kind filtering happens in Ruby: `Entry.visible` and
   `Entry.of_kind(*kinds)` return arrays and work on relations.
 - `Submission`: `attribute :record, :json`; the `request_id` column is the JSON-encoded string, so
-  `Submission.for_request(id)` encodes with `to_json`; `type`, `entry_id`, `answer_entry_id`, `reason`, `detail`,
+  `Submission.for_request(id)` encodes with `IndexedString`; `created_at` is a column; `type`, `entry_id`, `answer_entry_id`, `reason`, `detail`,
   `entry`, `answer` come from the record; `status` is a column with scopes `pending`, `settled`, `unanswered`;
   `explanation` turns pi's reasons (`no_model`, `run_failed`, `aborted`, …) into a sentence.
 - `Task`: `attribute :record, :json`; `kind` decodes the JSON column; `status`, `abort_requested?`,
@@ -388,23 +468,41 @@ Other Ruby:
 
 - `Configuration#token`: `Rails.application.credentials.dig(:durable_agent, :token)`, then
   `ENV["DURABLE_AGENT_TOKEN"]`, then in development and test a value derived from `secret_key_base` so both
-  halves agree with zero setup. Production with none of these raises at boot of either half. A blank token raises
-  `MissingToken` rather than being compared.
+  halves agree with zero setup. Production with none of these raises `MissingToken` where the token is used (the
+  `durable_agent:sidecar` task, the engine's controllers, the client), not at boot, so `db:migrate`, `console`
+  and asset builds run without one. A blank token raises `MissingToken` rather than being compared.
+- `DurableAgent::IndexedString.encode(value)` / `.decode(text)`: the indexed-string encoding (see Schema).
 - `DurableAgent::MessageText` extracts text, tool calls and thinking from pi messages (string content or blocks
   of `{type: "text" | "thinking" | "toolCall"}`).
 - `DurableAgent::Client` wraps Net::HTTP. Errors: `DurableAgent::Error` (status, body), `Busy` (409),
-  `UnknownModel` (422 on conversations, carries `suggestions`), `Unavailable` (connection refused / timeout).
+  `UnknownModel` (422 on conversations, carries `suggestions`), `Unavailable` (connection refused, reset or
+  timed out; `EOFError`, `IOError` or `Errno::EPIPE` from a sidecar that went away mid-response; 503 `{error:
+  "starting"}` before the sidecar has resumed, with the message "sidecar is starting").
 - `DurableAgent::Sidecar.env` builds the environment table; `.database_url` renders the primary `database.yml`
   entry (`sqlite3` → `sqlite:///<absolute path>`, relative paths resolved against `Rails.root`; `postgresql` →
-  `postgres://user:pass@host:port/db` plus `?host=` and `?sslmode=`; an explicit `url` passes through; other
-  adapters raise `ArgumentError`); `.command` returns `["node", <dist/sidecar.js, or src/main.ts from a
+  `postgres://user:pass@host:port/db` plus `?host=`, `sslmode`, `sslrootcert`/`sslcert`/`sslkey` (relative paths
+  resolved against `Rails.root`) and `schema_search_path` as `options=-c search_path=<value>`; an explicit `url`
+  passes through; other adapters raise `ArgumentError`). `sslmode=require`, rendered or in an explicit URL,
+  reaches node as `sslmode=no-verify`: libpq's `require` encrypts without verifying the server certificate, while
+  pg-connection-string reads `require` as `verify-full` and would refuse the self-signed certificates many hosted
+  databases use; `no-verify` is its name for libpq's `require`. `verify-ca` and `verify-full` pass through.
+  `.command` returns `["node", <dist/sidecar.js, or src/main.ts from a
   checkout>]`; `.exec` replaces the process.
-- Rake task: `durable_agent:sidecar`. `rake build` bundles the sidecar before packaging the gem.
+- Rake task: `durable_agent:sidecar`. Package with `rake build`, which bundles the sidecar (not checked in) before
+  packaging; the gemspec aborts a bare `gem build` when `sidecar/dist/sidecar.js` is missing. `CHANGELOG.md` keeps
+  an Unreleased section.
+- `DurableAgent::TestHelper` (`require "durable_agent/test_helper"`, include it in `ActiveSupport::TestCase`):
+  `stub_sidecar(**responses)` replaces client methods with values, callables or errors and records
+  `sidecar_calls`; `fake_sidecar(**responses)` answers `create_conversation`, `submit` and `abort` as the sidecar
+  does, committing the conversation or queued submission row first (ids from 950001, submissions idempotent on
+  `request_id`, 404 for an unknown conversation). The gem's own tests use it.
 - Generator `durable_agent:install`: copies the migration, writes `config/initializers/durable_agent.rb` with
   commented production notes for excluding `/durable_agent` from `force_ssl`'s redirect and from `config.hosts`
   (the sidecar calls Rails over plain loopback HTTP), mounts the engine, adds `sidecar: bin/rails
-  durable_agent:sidecar` to `Procfile.dev` (creating it with `web:` and `sidecar:` otherwise), and prints what it
-  did and how to set a production token.
+  durable_agent:sidecar` to `Procfile.dev` (creating it with `web: bin/rails server -p 3000` and `sidecar:`
+  otherwise; when an existing `web:` line sets no port it says that foreman runs it on 5000 while `rails_url`
+  defaults to 3000), and prints what it did and how to set a production token. The initializer leaves
+  `config.model` commented out, so `DURABLE_AGENT_MODEL` keeps working, and shows all three callbacks.
 - The app brings its own database adapter gem (`pg` or `sqlite3`); the gem depends on `rails` and `turbo-rails`.
 
 ## Tests
@@ -415,18 +513,26 @@ Both suites run on both databases.
   `DURABLE_AGENT_DB` (`sqlite`, the default, files under `test/dummy/storage/`; `postgres` with
   `durable_agent_development` / `durable_agent_test`). `rake test` runs on SQLite, `rake test:postgres` on
   Postgres, `rake test:all` both. Fixtures use ids ≥ 900000 and `record` JSON in pi-durable's shapes. Covered:
-  the models (document values on a base and on a base followed by a delta, the JSON-encoded columns, transcript,
-  `last_failure`, `busy?`), client errors, the tools and events controllers, configuration (environment
-  defaults, blank token), `Sidecar.database_url` on both adapters, the generator, the migration against the
-  sidecar's SQL files, and one round trip that boots the real sidecar on `faux/faux-1` against the test database
-  when `node` is available. Cross-process reads use `ActiveRecord::Base.uncached`.
+  the models (document values on a base and on a base followed by a delta, the JSON-encoded columns against
+  hand-written `JSON.stringify` output, transcript, `last_failure`, `busy?`, timestamps, the root), the query
+  cache after commands (a second connection commits as the sidecar would), client errors, the tools and events
+  controllers (Bearer scheme, error exposure, auth events), configuration (environment defaults, blank token),
+  `Sidecar.database_url` on both adapters, the generator, `DurableAgent::TestHelper`, the migration against the
+  sidecar's SQL files on both adapters in every run and against `schema.rb`, and one round trip that boots the
+  real sidecar on `faux/faux-1` against the test database when `node` is available, after `/health` says
+  `resumed`. Cross-process reads use `ActiveRecord::Base.uncached`.
 - TypeScript: `node --test`. `test/helpers.ts` opens the database from `DURABLE_AGENT_TEST_DATABASE_URL`
   (default a fresh SQLite file in a temp dir) and applies the matching schema file. `npm test` runs on SQLite,
   `npm run test:postgres` on Postgres. Covered: pi-durable's storage conformance cases against
-  `openHarnessStorage`, the translator (including pi-durable's own migration DDL), the Postgres queue and retry,
+  `openHarnessStorage`, the translator (including pi-durable's own migration DDL), the Postgres queue, SELECT-only
+  retry and backend termination inside transactions, the SQLite busy wait against a second connection holding the lock,
   storage open (missing schema, seeding, version refusal, a Harness on faux), the base-document wrapper (unit
-  cases and a streaming `pi.live` that is only ever one base row equal to `watch.value.docs["pi.live"]`), the
-  change tracker and events against a fake Rails, credentials, settings, reports, the model check, the HTTP API,
+  cases, a task-scoped document among them, and a streaming `pi.live` that is only ever one base row equal to `watch.value.docs["pi.live"]`), the
+  change tracker (failing reads before and after the commit) and events (auth included) against a fake Rails,
+  credentials, settings (schema version newer and older), reports (`settled()`), the model check, the HTTP API
+  (health, readiness, login provider check), the process itself (`test/sidecar.test.ts` spawns `src/main.ts`: resume
+  after tools, exit 1 on a failed storage call, a second signal, `MissingSchema` for any missing table, a newer
+  schema), a restart that re-runs an interrupted replay-safe tool call once Rails lists the tools late,
   and the tools protocol with its boot retry.
 
 ## Conventions

@@ -37,7 +37,8 @@ The generator:
 - copies `db/migrate/*_create_durable_agent_tables.rb` (twelve `durable_agent_*` tables, the same on either database),
 - writes `config/initializers/durable_agent.rb`,
 - mounts the engine: `mount DurableAgent::Engine => "/durable_agent"`,
-- adds a `sidecar:` line to `Procfile.dev` (creating it with `web:` and `sidecar:` if needed),
+- adds a `sidecar:` line to `Procfile.dev` (creating it with `web: bin/rails server -p 3000` and `sidecar:` if
+  needed; the sidecar calls Rails at port 3000 by default, and foreman would otherwise run Puma on 5000),
 - prints how to set a production token.
 
 ## Use
@@ -60,7 +61,17 @@ conversation.last_failure    # the newest unanswered input, with #explanation
 
 `say` is idempotent on `request_id`: retrying with the same id returns the same submission. It returns the
 `DurableAgent::Submission` row, which the sidecar commits before it answers. Find it later with
-`conversation.submissions.for_request(id)`.
+`conversation.submissions.for_request(id)`. `start`, `say` and `abort` clear the query cache, so `busy?`,
+`transcript` and friends read the sidecar's commit within the same request.
+
+`DurableAgent.start` cannot take part in your transaction: the sidecar commits the conversation on its own
+connection before it answers. If saving your own record fails afterwards, the conversation stays behind,
+unreferenced. It is harmless, and you can find such leftovers by comparing `DurableAgent::Conversation.top_level`
+with your own references.
+
+`DurableAgent::Conversation.top_level` lists conversations no task owns, without the root conversation the sidecar
+creates at boot (id 1, `DurableAgent::Conversation.root`). Conversations, entries and submissions carry
+`created_at`; `conversation.last_activity_at` is the newest entry's, or the conversation's own.
 
 Every entry has `kind` (`pi.user`, `pi.assistant`, `pi.tool-result`, ...), `text`, `tool_calls`, `tool_name` and
 `error?`. In a view, subscribe to the conversation and the default `on_change` callback refreshes the page
@@ -81,7 +92,7 @@ All inherit from `DurableAgent::Error` (`status`, `body`):
 
 - `DurableAgent::Busy`: 409, the conversation is running and the submission used `when_busy: :reject`.
 - `DurableAgent::UnknownModel`: the model id is not one pi knows; `suggestions` lists close matches.
-- `DurableAgent::Unavailable`: the sidecar is not running or timed out.
+- `DurableAgent::Unavailable`: the sidecar is not running, timed out, went away mid-response, or is still starting.
 
 ### Provider sign-in
 
@@ -93,7 +104,10 @@ database and the token can decrypt. API keys work through `OPENAI_API_KEY` / `AN
 than this table; subscriptions sign in with OAuth:
 
 ```ruby
-DurableAgent.auth                               # => {"openai" => {"type" => "oauth"}, "anthropic" => nil}
+DurableAgent.auth
+# => {"openai" => {"type" => "oauth", "source" => "OAuth"},
+#     "anthropic" => {"type" => "api_key", "source" => "ANTHROPIC_API_KEY"},
+#     "google" => nil, ...}
 
 connection = DurableAgent::Connection.new("openai")
 connection.connected? / connection.subscription? / connection.unreachable?
@@ -104,7 +118,17 @@ connection.cancel_login(login["id"])
 connection.disconnect
 ```
 
-`Connection` tolerates an unreachable sidecar: it reads as not connected with `error` set.
+`DurableAgent.auth` lists every provider the sidecar's pi-ai knows, signed in or not (`nil`), plus `faux` when the
+sidecar runs the faux model. `type` is `"oauth"` or `"api_key"`; `source` says where pi-ai found it (`"OAuth"`,
+`"stored credential"`, or the environment variable). `Connection` covers OpenAI and Anthropic, and tolerates an
+unreachable sidecar: it reads as not connected with `error` set.
+
+When a sign-in completes or a provider signs out, the sidecar posts an auth event and `config.on_auth` runs. Its
+default refreshes pages subscribed to `"durable_agent:auth"`, so a settings page updates by itself:
+
+```erb
+<%= turbo_stream_from "durable_agent:auth" %>
+```
 
 ## Tools
 
@@ -138,8 +162,18 @@ underscored class name without its namespace (`lookup_invoice`); override with `
 At boot (and on `DurableAgent.client.reload_tools`) the sidecar fetches `GET /durable_agent/tools`. Each call is a
 `POST /durable_agent/tools/:name`, authenticated with the shared token. Inside `call`,
 `DurableAgent::Current.conversation_id` and `.call_id` say who asked. Return a string or anything JSON
-serialisable. Unknown or missing arguments, `ActiveRecord::RecordNotFound`, and any other error become an error
-result the model sees, with the exception message.
+serialisable.
+
+Errors become an error result the model sees. Unknown or missing arguments (`ArgumentError`),
+`ActiveRecord::RecordNotFound` and `DurableAgent::Tool::Error` carry their message; raise the last to tell the model
+what went wrong:
+
+```ruby
+raise DurableAgent::Tool::Error, "Invoices before 2020 are archived; ask for a newer one"
+```
+
+Any other exception reaches the model only as `"<ErrorClass> while running <tool>"` and is reported to
+`Rails.error` in full, so messages carrying SQL, paths or secrets stay in your app.
 
 ## Configuration
 
@@ -154,14 +188,25 @@ DurableAgent.configure do |config|
   config.token = "..."
   config.workspace_root = "storage/durable_agent"
   config.agent_name = "MyApp"              # shown on provider consent screens
+  config.parent_record_class = "ApplicationRecord"  # default "ActiveRecord::Base"
   config.on_change = ->(conversation) { ... }
   config.on_report = ->(report) { ... }
+  config.on_auth = ->(providers) { ... }
 end
 ```
 
+Every setting the sidecar also reads defaults to its `DURABLE_AGENT_*` variable (`MODEL`, `HOST`, `PORT`,
+`RAILS_URL`, `TOKEN`, `WORKSPACE_ROOT`, `NAME`), so `DURABLE_AGENT_MODEL=faux/faux-1 bin/dev` moves both
+processes. A value set in the initializer wins over the variable, which is why the generated initializer leaves
+`config.model` commented out.
+
+If your `ApplicationRecord` uses `connects_to` (roles, shards), set `config.parent_record_class =
+"ApplicationRecord"` in the initializer, so the durable_agent models inherit it and follow role switching.
+
 The token is read from `credentials.durable_agent.token`, then `ENV["DURABLE_AGENT_TOKEN"]`. In development and
 test it falls back to a value derived from `secret_key_base`, so both processes agree with no setup. In
-production, booting without one raises, and so does a blank one.
+production a missing or blank token raises where it is used (starting the sidecar, the engine's endpoints, the
+client), not at boot, so `db:migrate` and `console` work without one.
 
 The token is also the key for stored provider sign-ins (see [Provider sign-in](#provider-sign-in)). Rotating it, or
 moving from the development fallback to a real token, makes the stored sign-ins unreadable: the sidecar logs a
@@ -176,13 +221,13 @@ bin/rails credentials:edit
 ## Running the processes
 
 ```
-web: bin/rails server
+web: bin/rails server -p 3000
 sidecar: bin/rails durable_agent:sidecar
 ```
 
 `durable_agent:sidecar` derives the sidecar's whole environment from Rails (`DurableAgent::Sidecar.env`):
-`DATABASE_URL` from the primary database in `database.yml` (`postgres://…`, with `sslmode` when set, or
-`sqlite:///absolute/path`), the token, bind address, Rails URL, model and agent name, and passes
+`DATABASE_URL` from the primary database in `database.yml` (`postgres://…` with `sslmode`, `sslrootcert`,
+`sslcert`, `sslkey` and `schema_search_path` carried over, or `sqlite:///absolute/path`), the token, bind address, Rails URL, model and agent name, and passes
 `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` through. It then replaces itself with `node sidecar/dist/sidecar.js` (or
 the TypeScript source when no bundle is built). Run exactly one sidecar per app.
 
@@ -192,6 +237,12 @@ unanswered with reason `no_model` until someone signs in.
 
 SQLite suits development, test and single-host production: both processes open the same file (WAL, 5 s busy
 timeout, as Rails 8 configures it). Use Postgres when the web and sidecar processes run on different hosts.
+
+`sslmode=require` means "encrypt, but do not verify the certificate" to libpq (and Rails), while node-postgres
+reads it as full verification and would refuse the self-signed certificates many hosted databases use. The
+sidecar is therefore given `sslmode=no-verify`, node-postgres' name for the same thing, whether `require` comes
+from `database.yml` or from `DATABASE_URL`. `verify-ca` and `verify-full` pass through and verify, against
+`sslrootcert` when you set it.
 
 ### Production
 
@@ -236,13 +287,53 @@ rewindable document that does not checkpoint) raises `DurableAgent::Document::Hi
 `pi.*` documents Rails reads do.
 
 After each commit the sidecar posts the ids it touched to `POST /durable_agent/events`
-(`{"conversations": [7], "reports": [3]}`), authenticated with the shared token. Puma calls
-`config.on_change(conversation)` and `config.on_report(report)` for each id that exists. Both default to
-`Turbo::StreamsChannel.broadcast_refresh_to(conversation)`; replace them to broadcast your own partials or to
-notify other systems. Callback errors go to `Rails.error` and never fail the request. Because the broadcast
+(`{"conversations": [7], "reports": [3], "auth": ["openai"]}`), authenticated with `Authorization: Bearer
+<token>`. Puma calls `config.on_change(conversation)` and `config.on_report(report)` for each id that exists, and
+`config.on_auth(providers)` when sign-ins changed. The defaults broadcast Turbo refreshes: `on_change` to the
+conversation; `on_report` to the report's conversation, or to the `"durable_agent:reports"` stream when it has
+none (an operator page can `turbo_stream_from "durable_agent:reports"`); `on_auth` to `"durable_agent:auth"`.
+Replace them to broadcast your own partials or to notify other systems. Callback errors go to `Rails.error` and never fail the request. Because the broadcast
 happens inside Puma, the default `async` cable adapter works in development. Events are a hint, debounced and
 retried once: the state is already in the database, and the next event or page load shows anything a dropped
 event missed.
+
+## Testing your app
+
+durable_agent ships test support. In `test/test_helper.rb`:
+
+```ruby
+require "durable_agent/test_helper"
+
+class ActiveSupport::TestCase
+  include DurableAgent::TestHelper
+end
+```
+
+`fake_sidecar` answers `create_conversation`, `submit` and `abort` the way the sidecar does: it commits the
+conversation or the queued submission row first, then answers with its id, so `DurableAgent.start` and
+`conversation.say` find their rows inside the test's transaction. Submissions are idempotent on `request_id`, and
+an unknown conversation raises the sidecar's 404. `stub_sidecar` replaces any client call with a value, a
+callable or an exception; both record calls in `sidecar_calls`.
+
+```ruby
+test "sending a message" do
+  fake_sidecar(auth: CONNECTED)              # CONNECTED / DISCONNECTED are sample DurableAgent.auth answers
+
+  chat = Chat.create!                        # your code calls DurableAgent.start
+  chat.conversation.say("Hi", request_id: 1)
+
+  assert_equal 1, sidecar_calls(:submit).size
+  assert chat.conversation.submissions.for_request(1).sole.pending?
+end
+
+test "the sidecar is down" do
+  stub_sidecar(submit: DurableAgent::Unavailable)
+  # ...
+end
+```
+
+Rows for the harness tables can also come from fixtures under `test/fixtures/durable_agent/`. Use
+`DurableAgent::IndexedString.encode` for the JSON-encoded columns (`kind`, `key_value`, `request_id`).
 
 ## Limits of v1
 
@@ -265,6 +356,10 @@ bundle exec rake test:all          # both
 
 The round-trip test boots the real sidecar on `faux/faux-1` against the test database; it skips when
 `sidecar/node_modules` is missing or `node` is not on the PATH.
+
+Package the gem with `bundle exec rake build` (or `rake release`): it bundles the sidecar into
+`sidecar/dist/sidecar.js`, which is not checked in, before packaging. A bare `gem build` refuses to run without
+the bundle. Changes go in `CHANGELOG.md` under Unreleased.
 
 ## License
 

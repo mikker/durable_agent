@@ -162,6 +162,7 @@ export class RailsTools {
 	readonly #retry: BootRetry;
 	readonly #stopped = new AbortController();
 	#loaded = false;
+	#names: readonly string[] = [];
 
 	constructor(registry: Registry, railsUrl: string | undefined, token: string, retry: BootRetry = BOOT_RETRY) {
 		this.#registry = registry;
@@ -178,13 +179,20 @@ export class RailsTools {
 		this.#registry.install(railsExtension(definitions, this.#railsUrl, this.#token));
 		this.#loaded = true;
 		const names = definitions.map((definition) => definition.name);
+		this.#names = names;
 		log.info("tools loaded", { tools: names });
 		return names;
 	}
 
+	/** The tools installed now, as `GET /health` reports them. */
+	get names(): readonly string[] {
+		return this.#names;
+	}
+
 	/**
 	 * Boot: retries with backoff until Rails answers or the retry budget runs out, then runs with no tools until
-	 * `/tools/reload`. Never rejects; callers do not await it. Stops early once a reload succeeded or on `stop()`.
+	 * `/tools/reload`. Never rejects. Boot awaits it before resuming, because pi-durable decides whether an interrupted
+	 * tool call may run again by the tool registered at that moment. Stops early once a reload succeeded or on `stop()`.
 	 */
 	async load(): Promise<string[]> {
 		if (this.#railsUrl === undefined) {

@@ -18,12 +18,16 @@ class DurableAgent::ToolsControllerTest < ActionDispatch::IntegrationTest
   end
 
   class Explode < DurableAgent::Tool
-    def call = raise("boom")
+    def call = raise("secret connection string postgres://admin:hunter2@db")
+  end
+
+  class Refuse < DurableAgent::Tool
+    def call = raise(DurableAgent::Tool::Error, "Invoices before 2020 are archived")
   end
 
   setup do
     @tools = DurableAgent.config.instance_variable_get(:@tools)
-    DurableAgent.config.tools = [ LookupInvoice, "DurableAgent::ToolsControllerTest::Greet", Explode ]
+    DurableAgent.config.tools = [ LookupInvoice, "DurableAgent::ToolsControllerTest::Greet", Explode, Refuse ]
   end
 
   teardown { DurableAgent.config.tools = @tools }
@@ -40,7 +44,7 @@ class DurableAgent::ToolsControllerTest < ActionDispatch::IntegrationTest
   test "lists tool definitions" do
     get "/durable_agent/tools", headers: auth
     assert_response :ok
-    assert_equal %w[ lookup_invoice greet explode ], response.parsed_body.map { it["name"] }
+    assert_equal %w[ lookup_invoice greet explode refuse ], response.parsed_body.map { it["name"] }
     assert_equal({ "name" => "lookup_invoice", "description" => "Fetch one invoice by number",
       "parameters" => { "type" => "object", "properties" => { "number" => { "type" => "string", "description" => "Invoice number" } },
         "required" => [ "number" ], "additionalProperties" => false }, "replay" => "safe" }, response.parsed_body.first)
@@ -64,7 +68,7 @@ class DurableAgent::ToolsControllerTest < ActionDispatch::IntegrationTest
     assert_match "nope", response.parsed_body["error"]
   end
 
-  test "bad arguments, missing records and tool errors are 422 with the message" do
+  test "bad arguments, missing records and Tool::Error are 422 with the message" do
     run_tool "greet", arguments: { name: "Ada", mood: "happy" }
     assert_response :unprocessable_content
     assert_equal "unknown argument: mood", response.parsed_body["error"]
@@ -73,9 +77,18 @@ class DurableAgent::ToolsControllerTest < ActionDispatch::IntegrationTest
     assert_response :unprocessable_content
     assert_equal "no invoice INV-2", response.parsed_body["error"]
 
-    run_tool "explode", arguments: {}
+    run_tool "refuse", arguments: {}
     assert_response :unprocessable_content
-    assert_equal "boom", response.parsed_body["error"]
+    assert_equal "Invoices before 2020 are archived", response.parsed_body["error"]
+  end
+
+  test "any other error is reported and reaches the model as its class only" do
+    report = assert_error_reported(RuntimeError) { run_tool "explode", arguments: {}, conversation_id: 7 }
+
+    assert_response :unprocessable_content
+    assert_equal "RuntimeError while running explode", response.parsed_body["error"]
+    assert_match "hunter2", report.error.message
+    assert_equal({ durable_agent: :tool, tool: "explode", conversation_id: 7 }, report.context.slice(:durable_agent, :tool, :conversation_id))
   end
 
   private

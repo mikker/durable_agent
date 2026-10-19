@@ -13,6 +13,10 @@ module DurableAgent
   #     end
   #   end
   class Tool
+    # Raise this with a message for the model: "No invoice INV-9; numbers look like INV-1042". Other errors reach
+    # the model as their class name only.
+    class Error < StandardError; end
+
     TYPES = %i[ string integer number boolean array object ].freeze
     REPLAY_MODES = %i[ safe unsafe ].freeze
 

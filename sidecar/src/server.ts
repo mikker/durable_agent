@@ -9,6 +9,7 @@ import {
 	type Harness,
 	type InputSubmissionDraft,
 	type ModelRef,
+	type SessionEnd,
 } from "@earendil-works/pi-durable";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
@@ -19,8 +20,12 @@ import { assertKnownModel, UnknownModel } from "./models-check.ts";
 import { readHarnessSchemaVersion, readSchemaVersion } from "./settings.ts";
 import type { RailsTools } from "./tools.ts";
 
+/** Whether boot has resumed the Harness. Until then commands that would start the scheduler answer 503. */
+export type Readiness = { readonly resumed: boolean };
+
 export type ServerDeps = {
 	readonly harness: Harness;
+	readonly readiness: Readiness;
 	readonly models: Models;
 	readonly db: Db;
 	readonly logins: Logins;
@@ -66,8 +71,12 @@ const sameSecret = (given: string | undefined, expected: string): boolean => {
 	return a.length === b.length && timingSafeEqual(a, b);
 };
 
-export function createServer({ harness, models, db, logins, tools, token, defaultModel, context }: ServerDeps) {
+export function createServer({ harness, readiness, models, db, logins, tools, token, defaultModel, context }: ServerDeps) {
 	const app = new Hono();
+	let ended: SessionEnd | undefined;
+	void harness.closed.then((end) => {
+		ended = end;
+	});
 
 	app.use("*", async (c, next) => {
 		if (c.req.path === "/health") return next();
@@ -84,6 +93,12 @@ export function createServer({ harness, models, db, logins, tools, token, defaul
 		return c.json({ error: error instanceof Error ? error.message : String(error) }, 500);
 	});
 
+	// Submitting or aborting starts pi-durable's scheduler, which would settle an interrupted tool call before the tool
+	// definitions are back from Rails. Boot resumes once they are.
+	const assertResumed = (): void => {
+		if (!readiness.resumed) throw new HTTPException(503, { message: "starting" });
+	};
+
 	const conversation = async (raw: string) => {
 		const id = Number(raw);
 		const found = Number.isInteger(id) && id > 0 ? await harness.conversation(id as ConversationId, context) : undefined;
@@ -91,15 +106,19 @@ export function createServer({ harness, models, db, logins, tools, token, defaul
 		return found;
 	};
 
-	app.get("/health", async (c) =>
-		c.json({
+	app.get("/health", async (c) => {
+		// The database closes with the Harness; main.ts exits, but a request may arrive in between.
+		if (ended !== undefined) return c.json({ ok: false, error: closedReason(ended) }, 503);
+		return c.json({
 			ok: true,
 			schemaVersion: await readSchemaVersion(db),
 			harnessSchemaVersion: await readHarnessSchemaVersion(db),
 			database: db.dialect,
 			model: defaultModel,
-		}),
-	);
+			tools: tools.names,
+			resumed: readiness.resumed,
+		});
+	});
 
 	// Conversations -------------------------------------------------------------------------------------------------
 
@@ -119,6 +138,7 @@ export function createServer({ harness, models, db, logins, tools, token, defaul
 	});
 
 	app.post("/conversations/:id/submissions", async (c) => {
+		assertResumed();
 		const found = await conversation(c.req.param("id"));
 		const input = await body(c.req.raw);
 		if (typeof input.content !== "string" && !Array.isArray(input.content)) {
@@ -144,6 +164,7 @@ export function createServer({ harness, models, db, logins, tools, token, defaul
 	});
 
 	app.post("/conversations/:id/abort", async (c) => {
+		assertResumed();
 		const found = await conversation(c.req.param("id"));
 		await found.abort(context);
 		return c.json({ ok: true });
@@ -161,25 +182,22 @@ export function createServer({ harness, models, db, logins, tools, token, defaul
 		return c.json(login, login.status === "failed" ? 422 : 201);
 	});
 
-	app.get("/auth/:provider/logins/:id", (c) => {
-		const login = logins.get(c.req.param("id"));
-		if (login === undefined) throw new HTTPException(404, { message: "login not found" });
-		return c.json(login);
-	});
+	/** The login named by `:id`, which must belong to `:provider`. */
+	const login = (provider: string, id: string): string => {
+		if (logins.get(id)?.provider !== provider) throw new HTTPException(404, { message: "login not found" });
+		return id;
+	};
+
+	app.get("/auth/:provider/logins/:id", (c) => c.json(logins.get(login(c.req.param("provider"), c.req.param("id")))));
 
 	app.post("/auth/:provider/logins/:id/callback", async (c) => {
+		const id = login(c.req.param("provider"), c.req.param("id"));
 		const input = await body(c.req.raw);
 		if (typeof input.url !== "string") throw badRequest("url is required");
-		const login = logins.complete(c.req.param("id"), input.url);
-		if (login === undefined) throw new HTTPException(404, { message: "login not found" });
-		return c.json(login);
+		return c.json(logins.complete(id, input.url));
 	});
 
-	app.delete("/auth/:provider/logins/:id", (c) => {
-		const login = logins.cancel(c.req.param("id"));
-		if (login === undefined) throw new HTTPException(404, { message: "login not found" });
-		return c.json(login);
-	});
+	app.delete("/auth/:provider/logins/:id", (c) => c.json(logins.cancel(login(c.req.param("provider"), c.req.param("id")))));
 
 	app.delete("/auth/:provider", async (c) => {
 		await logins.logout(c.req.param("provider"));
@@ -199,3 +217,8 @@ export function createServer({ harness, models, db, logins, tools, token, defaul
 
 	return app;
 }
+
+const closedReason = (end: SessionEnd): string => {
+	if (end.reason === "closed") return "harness closed";
+	return `harness failed: ${end.error instanceof Error ? end.error.message : String(end.error)}`;
+};

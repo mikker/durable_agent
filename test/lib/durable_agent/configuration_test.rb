@@ -13,9 +13,10 @@ class DurableAgent::ConfigurationTest < ActiveSupport::TestCase
     assert_equal "http://127.0.0.1:4020", @config.url
   end
 
-  test "model, host, port and rails_url default to the DURABLE_AGENT_* variables the sidecar reads" do
+  test "every setting the sidecar reads defaults to its DURABLE_AGENT_* variable" do
     env = { "DURABLE_AGENT_MODEL" => "faux/faux-1", "DURABLE_AGENT_HOST" => "0.0.0.0", "DURABLE_AGENT_PORT" => "4077",
-            "DURABLE_AGENT_RAILS_URL" => "http://127.0.0.1:3077" }
+            "DURABLE_AGENT_RAILS_URL" => "http://127.0.0.1:3077", "DURABLE_AGENT_WORKSPACE_ROOT" => "/var/agent",
+            "DURABLE_AGENT_NAME" => "Acme" }
     previous = ENV.slice(*env.keys)
     ENV.update(env)
 
@@ -24,7 +25,9 @@ class DurableAgent::ConfigurationTest < ActiveSupport::TestCase
     assert_equal "http://0.0.0.0:4077", config.url
     assert_equal 4077, config.port
     assert_equal "http://127.0.0.1:3077", config.rails_url
-    assert_equal env.merge("DURABLE_AGENT_PORT" => "4077"), DurableAgent::Sidecar.env.slice(*env.keys)
+    assert_equal "/var/agent", config.workspace_root
+    assert_equal "Acme", config.agent_name
+    assert_equal env, DurableAgent::Sidecar.env.slice(*env.keys)
   ensure
     env.each_key { |key| previous.key?(key) ? ENV[key] = previous[key] : ENV.delete(key) }
   end
@@ -40,11 +43,16 @@ class DurableAgent::ConfigurationTest < ActiveSupport::TestCase
     ENV.delete("DURABLE_AGENT_TOKEN")
   end
 
-  test "production without a token raises" do
+  test "production without a token raises where the token is used, not at boot" do
     Rails.env = "production"
     assert_raises(DurableAgent::Configuration::MissingToken) { @config.token }
+    assert_raises(DurableAgent::Configuration::MissingToken) { with_config(@config) { DurableAgent::Sidecar.env } }
   ensure
     Rails.env = "test"
+  end
+
+  test "the engine checks no token at boot, so db:migrate and console run without one" do
+    assert_not_includes File.read(DurableAgent::Engine.root.join("lib/durable_agent/engine.rb")), "token"
   end
 
   test "an assigned token wins" do
@@ -66,12 +74,26 @@ class DurableAgent::ConfigurationTest < ActiveSupport::TestCase
     assert_equal [ "refresh" ], streams.map { it["action"] }
   end
 
-  test "on_report broadcasts to the report's conversation, when it has one" do
+  test "on_report broadcasts to the report's conversation, else to durable_agent:reports" do
     report = durable_agent_reports(:faulted)
     streams = capture_turbo_stream_broadcasts(report.conversation) { @config.on_report.call(report) }
     assert_equal [ "refresh" ], streams.map { it["action"] }
 
-    assert_nothing_raised { @config.on_report.call(durable_agent_reports(:session)) }
+    streams = capture_turbo_stream_broadcasts("durable_agent:reports") { @config.on_report.call(durable_agent_reports(:session)) }
+    assert_equal [ "refresh" ], streams.map { it["action"] }
+  end
+
+  test "on_auth broadcasts a refresh to durable_agent:auth" do
+    streams = capture_turbo_stream_broadcasts("durable_agent:auth") { @config.on_auth.call([ "openai" ]) }
+    assert_equal [ "refresh" ], streams.map { it["action"] }
+  end
+
+  test "parent_record_class defaults to ActiveRecord::Base, which the harness models inherit from" do
+    assert_equal "ActiveRecord::Base", @config.parent_record_class
+    assert_equal ActiveRecord::Base, DurableAgent::ApplicationRecord.superclass
+
+    @config.parent_record_class = "ApplicationRecord"
+    assert_equal "ApplicationRecord", @config.parent_record_class
   end
 
   test "callbacks can be replaced" do
@@ -85,4 +107,13 @@ class DurableAgent::ConfigurationTest < ActiveSupport::TestCase
     assert_equal DurableAgent::Tool, @config.tool("tool")
     assert_nil @config.tool("missing")
   end
+
+  private
+    def with_config(config)
+      previous = DurableAgent.config
+      DurableAgent.instance_variable_set(:@config, config)
+      yield
+    ensure
+      DurableAgent.instance_variable_set(:@config, previous)
+    end
 end

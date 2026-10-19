@@ -1,9 +1,16 @@
-# High ids so the real sidecar, which numbers from 2, never collides in the round-trip test.
-# `record` is pi-durable's ConversationRecord as JSON text.
+# High ids so the real sidecar, which numbers from 2, never collides in the round-trip test. The root
+# conversation (id 1) is the one the sidecar creates at boot. `record` is pi-durable's ConversationRecord as JSON
+# text; created_at is the database's default when the sidecar inserts the row.
 <% json = ->(value) { value.to_json.to_json } %>
+root:
+  id: 1
+  record: <%= json.({ id: 1 }) %>
+  created_at: <%= 3.days.ago.to_fs(:db) %>
+
 idle:
   id: 900001
   record: <%= json.({ id: 900001 }) %>
+  created_at: <%= 2.days.ago.to_fs(:db) %>
 
 busy:
   id: 900002
@@ -16,6 +23,7 @@ failed:
 forked:
   id: 900004
   record: <%= json.({ id: 900004, parent: { conversationId: 900001, at: 900102 } }) %>
+  created_at: <%= 1.day.ago.to_fs(:db) %>
 
 owned:
   id: 900005

@@ -19,6 +19,16 @@ class DurableAgent::SubmissionTest < ActiveSupport::TestCase
     assert_equal %("42"), DurableAgent::Submission.for_request(42).where_values_hash["request_id"]
   end
 
+  test "for_request finds ids with characters Rails would escape, stored as the sidecar writes them" do
+    # The column text JSON.stringify produces for this id, written by hand.
+    DurableAgent::Submission.insert({ id: 900490, conversation_id: 900004, request_id: %("a&b <x> \\"q\\" é😀 "), status: "queued",
+      record: %({"id":900490,"conversationId":900004,"type":"input","status":"queued"}) })
+
+    submission = DurableAgent::Submission.for_request(%(a&b <x> "q" é😀 )).sole
+    assert_equal 900490, submission.id
+    assert_equal %(a&b <x> "q" é😀 ), submission.request_id
+  end
+
   test "fields come from the record" do
     answered, failed = durable_agent_submissions(:answered), durable_agent_submissions(:unanswered_before_answer)
 

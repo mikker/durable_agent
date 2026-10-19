@@ -19,12 +19,13 @@ module DurableAgent
     def suggestions = body.is_a?(Hash) ? Array(body["suggestions"]) : []
   end
 
-  # The sidecar is not running or did not answer in time.
+  # The sidecar is not running, did not answer in time, or went away mid-response.
   class Unavailable < Error; end
 
   # The sidecar's HTTP API v1. Rails sends commands here and reads the results from the harness tables.
   class Client
-    UNREACHABLE = [ Errno::ECONNREFUSED, Errno::ECONNRESET, Errno::EHOSTUNREACH, Net::OpenTimeout, Net::ReadTimeout, SocketError ]
+    UNREACHABLE = [ Errno::ECONNREFUSED, Errno::ECONNRESET, Errno::EHOSTUNREACH, Errno::EPIPE, Net::OpenTimeout, Net::ReadTimeout,
+      SocketError, EOFError, IOError ]
 
     def initialize(url: nil, token: nil)
       @url, @token = url, token
@@ -77,13 +78,21 @@ module DurableAgent
           http.request(http_request)
         end
 
+        body = parse(response.body)
+        raise Unavailable.new(503, body, "sidecar is starting") if starting?(response, body)
+
         case response
-        when Net::HTTPSuccess then parse(response.body) || {}
-        when Net::HTTPConflict then raise Busy.new(response.code.to_i, parse(response.body))
-        else raise Error.new(response.code.to_i, parse(response.body))
+        when Net::HTTPSuccess then body || {}
+        when Net::HTTPConflict then raise Busy.new(response.code.to_i, body)
+        else raise Error.new(response.code.to_i, body)
         end
       rescue *UNREACHABLE => error
         raise Unavailable.new(nil, nil, "sidecar unreachable at #{url}: #{error.message}")
+      end
+
+      # Until the harness has resumed (after tools load) the sidecar answers commands with 503 "starting".
+      def starting?(response, body)
+        response.code == "503" && body.is_a?(Hash) && body["error"] == "starting"
       end
 
       def parse(body)

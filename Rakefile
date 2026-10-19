@@ -5,12 +5,15 @@ load "rails/tasks/engine.rake"
 
 require "bundler/gem_tasks"
 
-# The gem ships the bundled sidecar (sidecar/dist/sidecar.js); build it before packaging so it is never stale.
+# The gem ships the bundled sidecar (sidecar/dist/sidecar.js), which is not checked in. `rake build` (and
+# `rake release`, which runs it) bundles it first so it is never missing or stale; the gemspec refuses a bare
+# `gem build` without it.
 namespace :sidecar do
   desc "Bundle the sidecar into sidecar/dist/sidecar.js"
   task :build do
     sh "npm ci --prefix sidecar"
     sh "npm run build --prefix sidecar"
+    abort "sidecar/dist/sidecar.js was not built" unless File.exist?(File.expand_path("sidecar/dist/sidecar.js", __dir__))
   end
 end
 task build: "sidecar:build"

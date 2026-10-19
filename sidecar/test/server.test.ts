@@ -2,8 +2,9 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import type { Models } from "@earendil-works/pi-ai";
 import { Logins } from "../src/auth.ts";
-import { createServer } from "../src/server.ts";
+import { createServer, type ServerDeps } from "../src/server.ts";
 import { TEST_DIALECT } from "./helpers.ts";
 import { bootTestSidecar, type TestSidecar } from "./sidecar.ts";
 
@@ -11,18 +12,23 @@ const TOKEN = "server-test-token";
 let sidecar: TestSidecar;
 let app: ReturnType<typeof createServer>;
 
+const serverFor = (from: TestSidecar, overrides: Partial<ServerDeps> = {}) =>
+	createServer({
+		harness: from.opened.harness,
+		readiness: { resumed: true },
+		models: from.opened.models,
+		db: from.db,
+		logins: new Logins(from.opened.models, () => "device", "test"),
+		tools: from.opened.tools,
+		token: TOKEN,
+		defaultModel: from.opened.model,
+		context: BACKGROUND_CONTEXT,
+		...overrides,
+	});
+
 before(async () => {
 	sidecar = await bootTestSidecar({ config: { token: TOKEN } });
-	app = createServer({
-		harness: sidecar.opened.harness,
-		models: sidecar.opened.models,
-		db: sidecar.db,
-		logins: new Logins(sidecar.opened.models, () => "device", "test"),
-		tools: sidecar.opened.tools,
-		token: TOKEN,
-		defaultModel: sidecar.opened.model,
-		context: BACKGROUND_CONTEXT,
-	});
+	app = serverFor(sidecar);
 });
 
 after(async () => {
@@ -30,8 +36,8 @@ after(async () => {
 });
 
 /** `token: null` sends no Authorization header. */
-const call = (method: string, path: string, body?: unknown, token: string | null = TOKEN) =>
-	app.request(path, {
+const call = (method: string, path: string, body?: unknown, token: string | null = TOKEN, on = app) =>
+	on.request(path, {
 		method,
 		headers: {
 			"content-type": "application/json",
@@ -40,7 +46,7 @@ const call = (method: string, path: string, body?: unknown, token: string | null
 		...(body === undefined ? {} : { body: JSON.stringify(body) }),
 	});
 
-test("health needs no token and reports both schema versions, the database and the default model", async () => {
+test("health needs no token and reports both schema versions, the database, the default model, tools and resume", async () => {
 	const response = await call("GET", "/health", undefined, null);
 	assert.equal(response.status, 200);
 	assert.deepEqual(await response.json(), {
@@ -49,7 +55,65 @@ test("health needs no token and reports both schema versions, the database and t
 		harnessSchemaVersion: 1,
 		database: TEST_DIALECT,
 		model: { provider: "faux", modelId: "faux-1" },
+		tools: [],
+		resumed: true,
 	});
+});
+
+test("health is 503 once the harness has closed", async () => {
+	const other = await bootTestSidecar({ config: { token: TOKEN } });
+	const closedApp = serverFor(other);
+	await other.close();
+	const response = await call("GET", "/health", undefined, null, closedApp);
+	assert.equal(response.status, 503);
+	assert.deepEqual(await response.json(), { ok: false, error: "harness closed" });
+});
+
+test("until boot has resumed, submissions and aborts are 503 and health says so", async () => {
+	const starting = serverFor(sidecar, { readiness: { resumed: false } });
+	const created = await call("POST", "/conversations", {}, TOKEN, starting);
+	assert.equal(created.status, 201);
+	const { id } = (await created.json()) as { id: number };
+	const submitted = await call("POST", `/conversations/${id}/submissions`, { content: "Hi", request_id: "early" }, TOKEN, starting);
+	assert.equal(submitted.status, 503);
+	assert.deepEqual(await submitted.json(), { error: "starting" });
+	assert.equal((await call("POST", `/conversations/${id}/abort`, undefined, TOKEN, starting)).status, 503);
+	const health = (await (await call("GET", "/health", undefined, null, starting)).json()) as { resumed: boolean };
+	assert.equal(health.resumed, false);
+});
+
+/** Models whose OAuth login shows a URL and then waits for the redirect URL or a cancel; enough for Logins. */
+const fakeLoginModels = (): Models =>
+	({
+		getProviders: () => [],
+		checkAuth: async () => undefined,
+		logout: async () => {},
+		login: (
+			_provider: string,
+			_type: string,
+			{ signal, notify, prompt }: { signal: AbortSignal; notify: (event: unknown) => void; prompt: (request: unknown) => Promise<string> },
+		) => {
+			notify({ type: "auth_url", url: "https://auth.example/authorize" });
+			return prompt({ type: "manual_code", signal });
+		},
+	}) as unknown as Models;
+
+test("login routes answer only for the provider the login belongs to", async () => {
+	const withLogins = serverFor(sidecar, { logins: new Logins(fakeLoginModels(), () => "device", "test") });
+	const started = await call("POST", "/auth/openai/logins", undefined, TOKEN, withLogins);
+	assert.equal(started.status, 201);
+	const login = (await started.json()) as { id: string; provider: string; status: string; url: string };
+	assert.deepEqual([login.provider, login.status, login.url], ["openai", "awaiting_browser", "https://auth.example/authorize"]);
+
+	assert.equal((await call("GET", `/auth/openai/logins/${login.id}`, undefined, TOKEN, withLogins)).status, 200);
+	assert.equal((await call("GET", `/auth/anthropic/logins/${login.id}`, undefined, TOKEN, withLogins)).status, 404);
+	const wrongCallback = await call("POST", `/auth/anthropic/logins/${login.id}/callback`, { url: "http://x" }, TOKEN, withLogins);
+	assert.equal(wrongCallback.status, 404);
+	assert.equal((await call("DELETE", `/auth/anthropic/logins/${login.id}`, undefined, TOKEN, withLogins)).status, 404);
+	assert.equal((await call("GET", "/auth/openai/logins/nope", undefined, TOKEN, withLogins)).status, 404);
+
+	const cancelled = await call("DELETE", `/auth/openai/logins/${login.id}`, undefined, TOKEN, withLogins);
+	assert.equal(cancelled.status, 200);
 });
 
 test("everything else needs the bearer token", async () => {

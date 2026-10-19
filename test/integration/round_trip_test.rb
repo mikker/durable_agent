@@ -27,7 +27,8 @@ class DurableAgent::RoundTripTest < ActiveSupport::TestCase
     @previous_client = DurableAgent.instance_variable_get(:@client)
     DurableAgent.instance_variable_set(:@client, @client)
 
-    wait_until("sidecar health") { @client.health["ok"] rescue false }
+    # Commands answer 503 "starting" until the harness has resumed, which it does after tools load.
+    wait_until("sidecar resumed") { @client.health["resumed"] rescue false }
   end
 
   teardown do

@@ -16,8 +16,11 @@ import type {
 	TaskRecord,
 } from "@earendil-works/pi-durable";
 import { MemoryStorage } from "@earendil-works/pi-durable/storage/memory";
+import type { Models } from "@earendil-works/pi-ai";
+import { Logins } from "../src/auth.ts";
 import { type BaseDocumentStorage, delegateStorage, withBaseDocuments } from "../src/documents.ts";
 import { ChangeTracker, DEBOUNCE_MS, Events } from "../src/events.ts";
+import { until } from "./helpers.ts";
 import { bootTestSidecar } from "./sidecar.ts";
 
 const context = BACKGROUND_CONTEXT;
@@ -152,15 +155,21 @@ const sink = () => {
 	return { changed, events: { changed: (id: number) => void changed.push(id) } };
 };
 
-/** An inner storage that accepts every batch and knows two documents. */
-const fakeInner = (owners: Map<number, number>, fail = false): BaseDocumentStorage => ({
-	...delegateStorage(new MemoryStorage()),
-	commit: async () => {
+/** An inner storage that accepts every batch and knows the owners of the documents in `owners`. */
+const fakeInner = (owners: Map<number, number>, fail = false): BaseDocumentStorage => {
+	const commitWithOwners = async (writes: readonly StorageWrite[]) => {
 		if (fail) throw new Error("commit failed");
-		return 1 as Seq;
-	},
-	conversationOf: async (id) => owners.get(id) as ConversationId | undefined,
-});
+		const named = writes.flatMap((write) =>
+			write.type === "document.change" || write.type === "document.retire" ? [owners.get(write.id) as ConversationId] : [],
+		);
+		return { seq: 1 as Seq, owners: named.filter((owner) => owner !== undefined) };
+	};
+	return {
+		...delegateStorage(new MemoryStorage()),
+		commit: async (writes) => (await commitWithOwners(writes)).seq,
+		commitWithOwners,
+	};
+};
 
 const id = <T>(value: number) => value as T;
 
@@ -226,6 +235,115 @@ test("over real storage, document changes and retirements resolve through the ca
 
 	await tracker.commit([{ type: "document.retire", id: documentId }], context);
 	assert.deepEqual(changed, [conversationId]);
+});
+
+/** A conversation with one latest document, written through a tracker, and a memory storage whose reads can fail. */
+const documentFixture = async () => {
+	const memory = new MemoryStorage();
+	const read = memory.document.bind(memory);
+	const failing = { reads: false };
+	memory.document = (...args) => {
+		if (failing.reads) return Promise.reject(new Error("read failed"));
+		return read(...args);
+	};
+	const setup = new ChangeTracker(withBaseDocuments(memory), sink().events);
+	const conversationId = await setup.mintId<ConversationId>();
+	const otherId = await setup.mintId<ConversationId>();
+	const documentId = await setup.mintId<DocumentId>();
+	await setup.commit(
+		[
+			{ type: "conversation", value: { id: conversationId } },
+			{ type: "conversation", value: { id: otherId } },
+			{
+				type: "document.create",
+				record: { id: documentId, kind: "pi.live", scope: { kind: "conversation", conversationId }, history: "latest", fork: "current" },
+				content: { kind: "base", version: 1, value: { text: "" } },
+			},
+		],
+		context,
+	);
+	const entryId = await setup.mintId<EntryId>();
+	const batch: StorageWrite[] = [
+		{ type: "entry", value: { id: entryId, conversationId: otherId, kind: "test.entry" } },
+		{ type: "document.change", id: documentId, content: { kind: "base", version: 1, value: { text: "checkpoint" } } },
+	];
+	return { memory, failing, conversationId, otherId, documentId, batch };
+};
+
+test("a read that fails after the commit cannot fail it: owners are resolved before", async (t) => {
+	t.mock.method(process.stdout, "write", () => true);
+	const { memory, failing, conversationId, otherId, documentId, batch } = await documentFixture();
+	const commit = memory.commit.bind(memory);
+	memory.commit = async (writes, ctx) => {
+		const seq = await commit(writes, ctx);
+		failing.reads = true;
+		return seq;
+	};
+	// A fresh tracker has an empty cache, as after a restart.
+	const { changed, events } = sink();
+	await new ChangeTracker(withBaseDocuments(memory), events).commit(batch, context);
+	failing.reads = false;
+	assert.deepEqual([...changed].sort((a, b) => a - b), [conversationId, otherId]);
+	assert.deepEqual((await memory.document(documentId, "current", context))?.value, { text: "checkpoint" });
+});
+
+test("a failed pre-commit owner read still commits and announces nothing for that document", async (t) => {
+	const lines: string[] = [];
+	t.mock.method(process.stdout, "write", (line: unknown) => void lines.push(String(line)));
+	const { memory, failing, otherId, documentId, batch } = await documentFixture();
+	failing.reads = true;
+	const { changed, events } = sink();
+	await new ChangeTracker(withBaseDocuments(memory), events).commit(batch, context);
+	failing.reads = false;
+	t.mock.restoreAll();
+	assert.deepEqual(changed, [otherId]);
+	assert.deepEqual((await memory.document(documentId, "current", context))?.value, { text: "checkpoint" });
+	assert.ok(lines.some((line) => /"level":"warn".*could not read a document's conversation/.test(line)), "the skipped owner is logged");
+});
+
+test("a sink that throws after the commit does not reject it", async (t) => {
+	t.mock.method(process.stdout, "write", () => true);
+	const tracker = new ChangeTracker(fakeInner(new Map()), {
+		changed: () => {
+			throw new Error("sink broke");
+		},
+	});
+	assert.equal(await tracker.commit([{ type: "conversation", value: { id: id<ConversationId>(1) } }], context), 1);
+});
+
+// Auth events --------------------------------------------------------------------------------------------------------
+
+test("sign-in changes are posted as auth, and the key is left out when none changed", async () => {
+	const events = new Events({ railsUrl, token: TOKEN });
+	events.auth("openai");
+	events.changed(3);
+	events.auth("openai");
+	await events.flush();
+	events.changed(4);
+	await events.flush();
+	assert.deepEqual(
+		received.map((request) => request.body),
+		[
+			{ conversations: [3], reports: [], auth: ["openai"] },
+			{ conversations: [4], reports: [] },
+		],
+	);
+});
+
+test("a completed login and a logout each announce the provider", async () => {
+	const announced: string[] = [];
+	const models = {
+		login: async (_provider: string, _type: string, { notify }: { notify: (event: unknown) => void }) => {
+			notify({ type: "auth_url", url: "https://auth.example/authorize" });
+		},
+		logout: async () => {},
+	} as unknown as Models;
+	const logins = new Logins(models, () => "device", "test", (provider) => announced.push(provider));
+	const login = await logins.start("openai");
+	await until("the login to finish", () => login.status === "done");
+	assert.deepEqual(announced, ["openai"]);
+	await logins.logout("anthropic");
+	assert.deepEqual(announced, ["openai", "anthropic"]);
 });
 
 test("a real Harness run announces its conversation to Rails", async () => {

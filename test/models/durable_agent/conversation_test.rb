@@ -62,10 +62,38 @@ class DurableAgent::ConversationTest < ActiveSupport::TestCase
     assert_nil durable_agent_conversations(:idle).parent_at
   end
 
-  test "top level excludes conversations a task owns" do
+  test "top level excludes conversations a task owns and the root" do
     assert_includes DurableAgent::Conversation.top_level, durable_agent_conversations(:idle)
     assert_not_includes DurableAgent::Conversation.top_level, durable_agent_conversations(:owned)
+    assert_not_includes DurableAgent::Conversation.top_level, durable_agent_conversations(:root)
     assert_equal durable_agent_conversations(:busy), durable_agent_conversations(:owned).owner
+  end
+
+  test "root is the conversation the sidecar creates at boot" do
+    assert_equal durable_agent_conversations(:root), DurableAgent::Conversation.root
+    assert DurableAgent::Conversation.root.root?
+    assert_not durable_agent_conversations(:idle).root?
+  end
+
+  test "created_at, and last activity from the newest entry" do
+    idle, forked = durable_agent_conversations(:idle), durable_agent_conversations(:forked)
+
+    assert_in_delta 2.days.ago, idle.created_at, 5.seconds
+    assert_in_delta 1.hour.ago, idle.last_activity_at, 5.seconds
+    assert_equal forked.created_at, forked.last_activity_at, "no entries of its own"
+    assert_kind_of Time, durable_agent_entries(:answer).created_at
+    assert_kind_of Time, durable_agent_submissions(:answered).created_at
+  end
+
+  test "created_at comes from the column default when the sidecar inserts a row" do
+    DurableAgent::Conversation.connection.execute(%(INSERT INTO durable_agent_conversations (id, record) VALUES (900099, '{"id":900099}')))
+    DurableAgent::Entry.connection.execute(%(INSERT INTO durable_agent_entries (id, conversation_id, commit_seq, record) VALUES (900199, 900099, 1, '{}')))
+    DurableAgent::Submission.connection.execute(%(INSERT INTO durable_agent_submissions (id, conversation_id, status, record) VALUES (900499, 900099, 'queued', '{}')))
+
+    conversation = DurableAgent.conversation(900099)
+    assert_in_delta Time.current, conversation.created_at, 5.seconds
+    assert_in_delta Time.current, conversation.entries.sole.created_at, 5.seconds
+    assert_in_delta Time.current, conversation.submissions.sole.created_at, 5.seconds
   end
 
   test "associations follow conversation_id" do
@@ -114,6 +142,6 @@ class DurableAgent::ConversationTest < ActiveSupport::TestCase
 
   test "conversation finds by id" do
     assert_equal durable_agent_conversations(:busy), DurableAgent.conversation(900002)
-    assert_raises(ActiveRecord::RecordNotFound) { DurableAgent.conversation(1) }
+    assert_raises(ActiveRecord::RecordNotFound) { DurableAgent.conversation(2) }
   end
 end
