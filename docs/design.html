@@ -324,7 +324,7 @@ turbo_stream_from conversation               # refresh broadcasts, morph</code><
 
           <rect x="30" y="240" width="410" height="60" rx="6" class="svg-box" stroke-width="1.2"/>
           <text x="46" y="264" font-weight="600">openNodeSqliteDatabase</text>
-          <text x="46" y="284" font-size="11" class="svg-muted">pi-durable's node:sqlite adapter · WAL, NORMAL, 5 s busy</text>
+          <text x="46" y="284" font-size="11" class="svg-muted">pi-durable's node:sqlite adapter · WAL, NORMAL, async busy wait ≤ 30 s</text>
 
           <rect x="460" y="240" width="410" height="60" rx="6" class="svg-accent" stroke-width="1.3"/>
           <text x="476" y="264" font-weight="600" class="svg-accent-text">PostgresDatabase + translate.ts</text>
@@ -391,7 +391,9 @@ turbo_stream_from conversation               # refresh broadcasts, morph</code><
       <li><strong>Checks the harness tables exist.</strong><span>One <code>SELECT id FROM durable_agent_conversations LIMIT 0</code>, else <code>MissingSchema</code>.</span></li>
       <li><strong>Seeds the two singleton rows.</strong><span><code>durable_schema (1, CURRENT_SQLITE_SCHEMA_VERSION)</code> and <code>durable_metadata (1, next_id '2', next_seq 1)</code>, both <code>ON CONFLICT DO NOTHING</code>, so a database loaded from <code>schema.rb</code> works.</span></li>
       <li><strong>Refuses an older harness schema.</strong><span>A pi-durable release with a newer schema is a gem upgrade that ships a Rails migration. The sidecar never migrates.</span></li>
-      <li><strong>Opens <code>SqliteStorage</code> under the prefix.</strong><span>It finds the version current and runs no migrations.</span></li>
+      <li><strong>Opens <code>SqliteStorage</code> under the prefix.</strong><span>It finds the version current and runs no migrations. The gem's own <code>schema_version</code> row is checked too: newer than the gem refuses to boot, older warns.</span></li>
+      <li><strong>Serves, loads tools, then resumes.</strong><span>The HTTP server starts, the Ruby tool definitions are fetched with retries for up to 60 s, and only then does the Harness resume interrupted runs, so a replay-safe tool call interrupted by a restart runs again instead of settling as interrupted. Until then submissions and aborts answer <code>503 starting</code> and <code>/health</code> says <code>resumed: false</code>.</span></li>
+      <li><strong>Supervises the Harness.</strong><span>pi-durable treats a storage error as fatal to its session; the sidecar watches <code>harness.closed</code> and exits 1 on a failed session so a supervisor restarts it. An uncaught exception does the same. A missing table at any boot step is reported as "run bin/rails db:migrate".</span></li>
     </ol>
   </section>
 
@@ -401,12 +403,12 @@ turbo_stream_from conversation               # refresh broadcasts, morph</code><
       <div>
         <h3>Documents are stored as bases</h3>
         <p>pi-durable stores a document as a base revision plus chord deltas, and checkpoints a new base only when the document's definition says so (<code>pi.live</code> when idle, <code>pi.inbox</code> when empty). Without help, Rails would have to replay chord deltas to read a streaming <code>pi.live</code>.</p>
-        <p><code>withBaseDocuments</code> (in <code>documents.ts</code>) intercepts <code>commit</code>: for each delta on a conversation document with <code>history: "latest"</code>, it reads the current value, applies the ops with chord's <code>apply</code> on a structured clone, and commits a base of the same version instead. The storage core then drops the earlier revisions, so such a document always has exactly one revision row. Commits through the wrapper are serialized so the read and the commit cannot interleave. Deltas on rewindable documents pass through.</p>
+        <p><code>withBaseDocuments</code> (in <code>documents.ts</code>) intercepts <code>commit</code>: for each delta on a current-only document (conversation scope with <code>history: "latest"</code>, or any task or session scope, the same rule the storage core uses to keep one revision), it reads the current value, applies the ops with chord's <code>apply</code> on a structured clone, and commits a base of the same version instead. The storage core then drops the earlier revisions, so such a document always has exactly one revision row. Commits through the wrapper are serialized so the read and the commit cannot interleave. Deltas on rewindable documents pass through.</p>
       </div>
       <div>
         <h3>Change tracker and events</h3>
-        <p><code>ChangeTracker</code> (in <code>events.ts</code>) also wraps <code>commit</code>. After it resolves, it names the conversations the commit touched: conversation, entry and submission writes directly; document writes through a read-through cache from document id to conversation; a retired document's owner resolved before the commit. Task writes are ignored.</p>
-        <p><code>Events</code> batches them with new report ids and posts <code>{"conversations": [7, 9], "reports": [3]}</code> to <code>/durable_agent/events</code>: at most every 100 ms while changes keep coming, one retry after 1 s, then a warning and drop. Best effort, by design. Unset <code>DURABLE_AGENT_RAILS_URL</code> disables events; shutdown flushes them.</p>
+        <p><code>ChangeTracker</code> (in <code>events.ts</code>) also wraps <code>commit</code>. Before the commit it names the conversations the batch will touch: conversation, entry and submission writes directly; document writes through a read-through cache from document id to conversation, sharing the base rewrite's read. A failed lookup skips that document and is logged; nothing after the commit can reject it, so the event path never decides a commit's fate. Task writes are ignored.</p>
+        <p><code>Events</code> batches them with new report ids and posts <code>{"conversations": [7, 9], "reports": [3], "auth": ["openai"]}</code> (the <code>auth</code> key when a sign-in completed or a provider signed out) to <code>/durable_agent/events</code>: at most every 100 ms while changes keep coming, one retry after 1 s, then a warning and drop. Best effort, by design. Unset <code>DURABLE_AGENT_RAILS_URL</code> disables events; shutdown flushes them.</p>
       </div>
     </div>
   </section>
@@ -551,8 +553,8 @@ DurableAgent::Connection.new("openai").connected? / start_login / complete_login
   <section>
     <h2>What is in the box</h2>
     <div class="budget">
-      <div><div class="n">826</div><div class="l">lines of Ruby in app/ and lib/</div></div>
-      <div><div class="n">1,815</div><div class="l">lines of TypeScript in sidecar/src</div></div>
+      <div><div class="n">1,041</div><div class="l">lines of Ruby in app/ and lib/</div></div>
+      <div><div class="n">2,121</div><div class="l">lines of TypeScript in sidecar/src</div></div>
       <div><div class="n">11</div><div class="l">HTTP handlers</div></div>
       <div><div class="n">12</div><div class="l">tables, 9 of them pi-durable's</div></div>
       <div><div class="n">1</div><div class="l">extra process</div></div>
@@ -566,10 +568,12 @@ DurableAgent::Connection.new("openai").connected? / start_login / complete_login
   lib/durable_agent/current.rb               conversation_id, call_id during a tool call
   lib/durable_agent/sidecar.rb               env and DATABASE_URL from Rails config, command, exec
   lib/durable_agent/message_text.rb          text and tool calls out of pi messages
+  lib/durable_agent/indexed_string.rb        JSON.stringify-compatible encoding of kind, key and request_id columns
+  lib/durable_agent/test_helper.rb           stub_sidecar, fake_sidecar (commits rows the way the sidecar does)
   lib/durable_agent/engine.rb, version.rb
   lib/tasks/durable_agent_tasks.rake         durable_agent:sidecar
   lib/generators/durable_agent/install/      install_generator.rb
-    templates/create_durable_agent_tables.rb.tt   the twelve tables (122 lines)
+    templates/create_durable_agent_tables.rb.tt   the twelve tables (120 lines)
     templates/durable_agent.rb.tt                 initializer, with force_ssl and config.hosts notes
   app/models/concerns/durable_agent/harness_record.rb   table name, readonly?
   app/models/durable_agent/                  application_record, conversation, entry, task, submission,
@@ -578,7 +582,7 @@ DurableAgent::Connection.new("openai").connected? / start_login / complete_login
   config/routes.rb                           GET /tools, POST /tools/:name, POST /events
   sidecar/src/                               main, config, log, harness, storage, documents, events, server,
                                              auth, credentials, settings, reports, tools, models-check
-  sidecar/src/db/                            index (openDatabase), sqlite, postgres (182 lines), translate
+  sidecar/src/db/                            index (openDatabase), sqlite (async busy wait), postgres (259 lines), translate
   sidecar/sql/                               schema.sqlite.sql, schema.postgres.sql (test renderings)
   sidecar/dist/sidecar.js                    single ~3 MB esbuild bundle, built by rake build (Node ≥ 22.19)</code></pre>
 
@@ -603,15 +607,17 @@ DurableAgent::Connection.new("openai").connected? / start_login / complete_login
     <h2>Design decisions</h2>
     <ul class="prose">
       <li><strong>The sidecar never runs DDL.</strong> Rails migrations own every schema change, including future pi-durable schema versions, which ship as gem migrations. pi-durable's storage would otherwise migrate on open, so the sidecar checks the version first.</li>
-      <li><strong>The schema check order is load-bearing.</strong> Settings row first (so a missing table fails with "run bin/rails db:migrate"), then the conversations table, then the seed, then the version check, then <code>SqliteStorage.open</code>. Seeding before the check is what lets a database loaded from <code>schema.rb</code>, which carries no rows, boot.</li>
+      <li><strong>Boot fails early and clearly.</strong> Every boot step runs inside one handler, so a missing table anywhere is <code>MissingSchema</code>.  Settings row first (so a missing table fails with "run bin/rails db:migrate"), then the conversations table, then the seed, then the version check, then <code>SqliteStorage.open</code>. Seeding before the check is what lets a database loaded from <code>schema.rb</code>, which carries no rows, boot.</li>
       <li><strong>The Harness closes the database handle.</strong> <code>SqliteStorage.close</code> closes its facade, so <code>harness.close</code> closes the database; both adapters' <code>close</code> are idempotent, and shutdown closes the Harness, flushes events, then closes the database again harmlessly.</li>
       <li><strong>Postgres runs in UTC.</strong> <code>CURRENT_TIMESTAMP</code> lands in <code>timestamp without time zone</code> columns that Rails reads as UTC, so every pooled connection starts with <code>-c TimeZone=UTC</code>, appended to any <code>options</code> the URL carries.</li>
       <li><strong>Postgres still needs <code>CREATE</code> on the schema.</strong> The one DDL statement pi-durable still sends is its <code>CREATE TABLE IF NOT EXISTS durable_agent_durable_schema</code>, a no-op over the existing table, but Postgres checks the permission first.</li>
       <li><strong>Rails index syntax reproduces pi-durable's indexes.</strong> <code>order: { id: :desc }</code> and <code>where: "head IS NOT NULL"</code> give the same <code>id DESC</code> columns and partial index, under pi-durable's own index names.</li>
-      <li><strong>Singleton primary keys autoincrement, harmlessly.</strong> <code>t.integer :singleton, primary_key: true</code> becomes an autoincrementing key on both adapters; the sidecar always writes <code>singleton = 1</code> explicitly, so the default is never used.</li>
-      <li><strong>One serial queue on Postgres, as on SQLite.</strong> A pool of two, with nothing else running while a transaction is open, matches pi-durable's node adapter. Outside a transaction, a connection-class error gets one retry, because pi-durable treats a failed storage call as fatal to its session.</li>
+      <li><strong>Rails' default primary keys, on purpose.</strong> The harness tables use Rails' own <code>id</code>: <code>INTEGER PRIMARY KEY</code> on SQLite, a rowid alias like pi-durable's DDL, and <code>bigserial</code> on Postgres whose sequence is never used because the sidecar supplies every id. Conversations, entries and submissions also carry a <code>created_at</code> the database fills, since pi-durable records no times.</li>
+      <li><strong>One serial queue on Postgres, as on SQLite.</strong> A pool of two, with nothing else running while a transaction is open, matches pi-durable's node adapter. A checked-out client carries an error listener for its whole life, so a dropped connection inside a transaction rejects that transaction instead of crashing the process. Outside a transaction only a plain <code>SELECT</code> is retried after a connection error; a write whose response was lost is never sent twice.</li>
+      <li><strong>SQLite waits without stalling.</strong> node:sqlite's busy wait is synchronous, so the adapter keeps it at 100 ms and retries a busy <code>BEGIN IMMEDIATE</code> asynchronously, 25 ms doubling to 500 ms, for up to 30 s. The rule for a shared file: no other writer holds the write lock longer than 30 s.</li>
+      <li><strong>Shutdown has a deadline.</strong> Open requests get 10 s, reports in flight are awaited, the Harness closes, events flush; the whole thing has 30 s, and a second signal exits at once.</li>
       <li><strong>Events are a hint, not a log.</strong> Debounced, retried once, then dropped. Correctness lives in the tables; an event only shortens the time until a page shows it.</li>
-      <li><strong>Documents are folded only where Rails reads them.</strong> The base rewrite applies to conversation-scoped <code>history: "latest"</code> documents; rewindable ones keep their deltas, and <code>HistoryNotSupported</code> makes a violation loud.</li>
+      <li><strong>Documents are folded exactly where the core keeps one revision.</strong> The base rewrite applies to every current-only document; rewindable conversation documents keep their deltas, and <code>HistoryNotSupported</code> makes a violation loud.</li>
       <li><strong>Small guarantees.</strong> Zero-setup tokens in development and test, derived from <code>secret_key_base</code>; tools may be given as class names so they survive reloading; a wrong default model does not take the service down; tools reload in place.</li>
     </ul>
   </section>
@@ -619,19 +625,20 @@ DurableAgent::Connection.new("openai").connected? / start_login / complete_login
   <section>
     <h2>Status</h2>
     <ol class="steps">
-      <li><strong>Storage over the app's database, both adapters, both wrappers.</strong><span>Done. 82 node:test cases per dialect, including pi-durable's 24 storage conformance cases against <code>openHarnessStorage</code>; Postgres-only cases skip on SQLite and the WAL case skips on Postgres.</span></li>
-      <li><strong>Ruby engine: read models over pi-durable's tables, events controller, client, tools.</strong><span>Done. 100 Minitest runs per adapter, 0 failures, on SQLite and on Postgres.</span></li>
+      <li><strong>Storage over the app's database, both adapters, both wrappers.</strong><span>Done. 112 node:test cases on SQLite and 111 on Postgres, including pi-durable's 24 storage conformance cases against <code>openHarnessStorage</code>; Postgres-only cases skip on SQLite and the WAL case skips on Postgres.</span></li>
+      <li><strong>Ruby engine: read models over pi-durable's tables, events controller, client, tools.</strong><span>Done. 136 Minitest runs per adapter, 0 failures, on SQLite and on Postgres, including a full schema comparison between the migration and the sidecar's SQL renderings.</span></li>
       <li><strong>Round trip on each adapter.</strong><span>Done. The integration test boots the real sidecar on <code>faux/faux-1</code> against the test database and reads the answer back through the models.</span></li>
       <li><strong>Installer, rake task, bundle.</strong><span>Done. Migration, initializer, mount, one Procfile.dev line.</span></li>
-      <li class="open"><strong>Run a real app on the gem.</strong><span>Open. Re-point the slopdep demo app at the gem.</span></li>
+      <li><strong>Resilience under real failures.</strong><span>Done. Tests terminate the Postgres backend inside a transaction, hold the SQLite write lock from another process, fail a storage call and watch the process exit 1, restart the sidecar during a replay-safe tool call, and inject failing reads around a commit.</span></li>
+      <li><strong>A real app on the gem.</strong><span>Done. A Nitro Kit chat app installed with the generator runs on SQLite with the sidecar: tools fetched, answers rendered, change events reaching Puma, the ChatGPT sign-in carried over.</span></li>
       <li class="open"><strong>A real-provider run.</strong><span>Open. A real model calling a Ruby tool end to end; faux cannot emit tool calls from outside the process, so tool execution is covered by the sidecar's fake-Rails test and the Ruby controller tests separately.</span></li>
     </ol>
     <h3>Known limitations</h3>
     <ul class="prose">
-      <li><strong>Multi-database role switching.</strong> <code>DurableAgent::ApplicationRecord</code> inherits <code>ActiveRecord::Base</code> directly, so <code>connected_to(role: :reading)</code> raises <code>ConnectionNotDefined</code>. A <code>parent_record_class</code> setting is the usual fix.</li>
-      <li><strong>Tool exception messages go to the model.</strong> Any <code>StandardError</code>'s message is returned, and a <code>PG::Error</code> carries the failing SQL.</li>
-      <li><strong>Packaging.</strong> <code>sidecar/dist</code> is untracked and the gemspec excludes <code>sidecar/src</code>, so a bare <code>gem build</code> ships no sidecar; only <code>rake build</code> does. No CHANGELOG yet.</li>
-      <li><strong>Smaller ones.</strong> <code>schema_search_path</code> is not forwarded in <code>DATABASE_URL</code>; refresh broadcasts arrive up to every 100 ms per streaming conversation; pi-durable 1.3.0 reports carry no conversation, so the default <code>on_report</code> has nothing to refresh; <code>faux/faux-1</code> is registered only when it is the default model; demodulized tool names can collide; the gem's own <code>schema_version</code> row is recorded but not yet checked.</li>
+      <li><strong>A report raised while the Harness is closing is lost.</strong> Closing the Harness closes the database; reports in flight before that are awaited, one raised during the close itself cannot be stored.</li>
+      <li><strong>Refresh broadcasts arrive up to every 100 ms per streaming conversation.</strong> The event debounce bounds the rate; the page refresh is not debounced further.</li>
+      <li><strong>pi-durable 1.3.0 reports carry no conversation.</strong> They land on the <code>durable_agent:reports</code> stream rather than a conversation's.</li>
+      <li><strong>Smaller ones.</strong> <code>faux/faux-1</code> is registered only when it is the default model; demodulized tool names can collide; very long request ids or document keys could exceed Postgres index entry limits; <code>sslmode=prefer</code> and <code>allow</code> pass through to node unchanged, where they mean full verification; a role on Postgres 15+ needs <code>CREATE</code> on the schema for pi-durable's one <code>CREATE TABLE IF NOT EXISTS</code>; the 30 s shutdown deadline and the uncaught-exception exit are not covered by tests.</li>
     </ul>
   </section>
 </main>
