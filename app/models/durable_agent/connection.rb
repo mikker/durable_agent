@@ -1,5 +1,5 @@
-# Provider sign-in as Rails sees it. Pure sidecar calls: the tokens stay in durable_agent_credentials and never
-# pass through Rails.
+# Provider sign-in as Rails sees it. Pure sidecar calls: the sidecar stores the tokens in durable_agent_credentials,
+# encrypted with a key derived from DURABLE_AGENT_TOKEN, and Rails never reads or decrypts them.
 #
 #   connection = DurableAgent::Connection.new("openai")
 #   login = connection.start_login       # => {"id" => ..., "status" => "awaiting_browser", "url" => "https://..."}

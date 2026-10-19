@@ -27,6 +27,7 @@ class DurableAgent::InstallGeneratorTest < Rails::Generators::TestCase
       assert_equal "web: bin/rails server\nsidecar: bin/rails durable_agent:sidecar\nrelay: bin/rails durable_agent:relay\n", procfile
     end
     assert_match "credentials:edit", output
+    assert_match "solid_cable", output
   end
 
   test "appends to an existing Procfile.dev once" do

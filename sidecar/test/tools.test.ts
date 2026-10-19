@@ -65,7 +65,7 @@ before(async () => {
 	railsUrl = `http://127.0.0.1:${(rails.address() as AddressInfo).port}`;
 
 	pool = await testPool();
-	const models = createModels({ credentials: new PostgresCredentialStore(pool) });
+	const models = createModels({ credentials: new PostgresCredentialStore(pool, "t") });
 	const faux = fauxProvider({ tokensPerSecond: 1000 });
 	models.setProvider(faux.provider);
 	faux.setResponses([

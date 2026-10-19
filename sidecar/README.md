@@ -28,7 +28,9 @@ By hand, from this directory: `cp .env.example .env`, edit, then `npm run dev` (
 | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` | pass-through | |
 
 The mirror tables must exist (the gem's migration; `npm run db:schema` applies `sql/schema.sql` for standalone use).
-Boot fails on a missing table; an unknown default model only logs an error.
+Boot fails on a missing table; an unknown default model only logs an error. Once running, a Postgres outage does not
+stop the agents: failed mirror writes are logged and retried every 5 s, and the next boot settles any submission
+row the outage left `queued` (see "Mirror semantics" in `../DESIGN.md`).
 
 ## Build
 

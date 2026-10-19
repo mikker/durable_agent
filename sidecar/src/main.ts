@@ -20,12 +20,17 @@ const context = BACKGROUND_CONTEXT;
 const config = loadConfig();
 
 const pool = new pg.Pool({ connectionString: config.databaseUrl, max: 5 });
+// pg emits `error` for idle clients (a Postgres restart, a dropped connection); unheard, it crashes the process.
+pool.on("error", (error) => log.error("postgres idle client error", { error }));
+// A stray rejection must not take down running agents; the mirror reconciles whatever it was writing.
+process.on("unhandledRejection", (error) => log.error("unhandled rejection", { error }));
 await pool.query("SELECT 1");
 // Fails here, with Postgres' "relation does not exist", when the durable_agent migration has not run.
 await recordSchemaVersion(pool);
 
-// Provider credentials (API keys, Sign in with ChatGPT tokens) live in Postgres and survive redeploys.
-const models = createProcessModels(config, new PostgresCredentialStore(pool));
+// Provider credentials (API keys, Sign in with ChatGPT tokens) live in Postgres, encrypted under a key derived from
+// the shared token, and survive redeploys.
+const models = createProcessModels(config, new PostgresCredentialStore(pool, config.token));
 const deviceId = await installationDeviceId(pool);
 const logins = new Logins(models, () => deviceId, config.agentName);
 

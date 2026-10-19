@@ -58,8 +58,9 @@ class CreateDurableAgentTables < ActiveRecord::Migration[8.1]
       t.index [ :conversation_id, :id ]
     end
 
-    # Provider credentials (OAuth tokens) the sidecar stores. Rails has no model for this table on purpose;
-    # connection status comes from the sidecar's GET /auth.
+    # Provider credentials (OAuth tokens) the sidecar stores, encrypted with a key derived from DURABLE_AGENT_TOKEN,
+    # so dumps and replicas hold ciphertext. Rails has no model for this table and never decrypts it; connection
+    # status comes from the sidecar's GET /auth.
     create_table :durable_agent_credentials, id: false do |t|
       t.text :provider_id, primary_key: true
       t.jsonb :credential, null: false

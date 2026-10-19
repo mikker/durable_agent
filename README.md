@@ -81,8 +81,12 @@ All inherit from `DurableAgent::Error` (`status`, `body`):
 
 ### Provider sign-in
 
-Credentials live in the sidecar (`durable_agent_credentials`), never in Rails. API keys work through
-`OPENAI_API_KEY` / `ANTHROPIC_API_KEY`; subscriptions sign in with OAuth:
+Sign-ins (including OAuth refresh tokens) are stored in your app's Postgres database, in
+`durable_agent_credentials`, encrypted by the sidecar with AES-256-GCM under a key derived from the shared
+`DURABLE_AGENT_TOKEN`. Database dumps, replicas and read-only database users see ciphertext. Rails has no model for
+the table and never decrypts it. This is not a vault: the sidecar process holds the key, and anyone with both the
+database and the token can decrypt. API keys work through `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`, read from the environment rather
+than this table; subscriptions sign in with OAuth:
 
 ```ruby
 DurableAgent.auth                               # => {"openai" => {"type" => "oauth"}, "anthropic" => nil}
@@ -157,6 +161,10 @@ The token is read from `credentials.durable_agent.token`, then `ENV["DURABLE_AGE
 test it falls back to a value derived from `secret_key_base`, so both processes agree with no setup. In
 production, booting without one raises.
 
+The token is also the key for stored provider sign-ins (see [Provider sign-in](#provider-sign-in)). Rotating it, or
+moving from the development fallback to a real token, makes the stored sign-ins unreadable: the sidecar logs a
+warning per provider, treats them as signed out, and users must sign in again.
+
 ```sh
 bin/rails credentials:edit
 # durable_agent:
@@ -194,7 +202,7 @@ database and raises `NOTIFY durable_agent_mirror`:
 | `durable_agent_documents` | current value of each conversation document (`pi.live`, `pi.inbox`, `pi.agent`, ...) |
 | `durable_agent_submissions` | every input Rails sent, from queued to done or unanswered |
 | `durable_agent_reports` | faults the harness reported (also `NOTIFY durable_agent_reports`) |
-| `durable_agent_credentials` | provider credentials; Rails has no model for it |
+| `durable_agent_credentials` | provider sign-ins, encrypted with a key derived from the token; Rails has no model for it |
 | `durable_agent_settings` | `device_id`, `schema_version` |
 
 IDs are pi's own, so the mirror models (`DurableAgent::Conversation`, `Entry`, `Document`, `Submission`, `Report`)
@@ -204,6 +212,18 @@ conversation and re-awaits unsettled submissions, so a crash loses nothing that 
 The relay LISTENs on both channels and calls `config.on_mirror(conversation, entries:, docs:, submission:)` and
 `config.on_report(report)`. Both default to `Turbo::StreamsChannel.broadcast_refresh_to(conversation)`. Replace
 them to broadcast your own partials or to notify other systems.
+
+The relay holds one database connection of its own. When no notification arrives for 30 seconds it sends a
+heartbeat (`SELECT 1`), so a silently dropped connection is noticed. On any connection failure it reports the
+error to `Rails.error`, discards the connection, and reconnects with backoff (1 s doubling to 30 s). Postgres does
+not queue a NOTIFY for a listener that is gone, so after reconnecting the relay calls `on_mirror` once for every
+conversation updated since it last heard from the database, with `entries: []`, `docs: []` and `submission: nil`.
+A custom `on_mirror` must accept such a frame; the default only needs the conversation. Reports raised during an
+outage are not replayed. The relay does not work through a transaction-pooling PgBouncer, which drops LISTEN.
+
+Broadcasts come from the relay process, not from Puma, so Action Cable's `async` adapter (the Rails default for
+development in `config/cable.yml`) cannot deliver them: it only reaches subscribers in its own process. Use
+`solid_cable` or `redis` in development as well as production.
 
 ## Limits of v0
 

@@ -66,7 +66,8 @@ CREATE TABLE IF NOT EXISTS durable_agent_reports (
 CREATE INDEX IF NOT EXISTS durable_agent_reports_conversation_idx ON durable_agent_reports (conversation_id, id);
 
 -- Provider credentials (API keys, OAuth tokens from Sign in with ChatGPT). Written only by the sidecar through
--- pi-ai's CredentialStore. Rails never reads this table; it asks the sidecar GET /auth for connection status.
+-- pi-ai's CredentialStore, encrypted with a key derived from DURABLE_AGENT_TOKEN (see credentials.ts). Rails never
+-- reads this table; it asks the sidecar GET /auth for connection status.
 CREATE TABLE IF NOT EXISTS durable_agent_credentials (
   provider_id TEXT PRIMARY KEY,
   credential  JSONB NOT NULL,

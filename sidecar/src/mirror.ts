@@ -3,14 +3,21 @@
 // NOTIFY on durable_agent_mirror so the Rails relay can broadcast a Turbo refresh without polling.
 //
 // Entries are immutable and globally identified, so they are inserted once with ON CONFLICT DO NOTHING. Documents are
-// upserted whole whenever their JSON changes. A failed write drops the in-memory bookkeeping, so the next frame
-// re-upserts everything the view holds; the mirror converges without ever blocking the Harness.
+// upserted whole whenever their JSON changes. The mirror never blocks the Harness and converges after Postgres
+// failures without waiting for agent activity:
+// - attach is all or nothing: a conversation is registered only once its row, first frame and watch are in place, so a
+//   failed attach can simply be retried (hook-driven attaches retry with backoff);
+// - a failed frame write drops the in-memory bookkeeping and marks the conversation dirty; the periodic reconcile pass
+//   rewrites the whole current view of every dirty conversation;
+// - a failed settlement write is remembered and retried by the reconcile pass, and boot settles every row Postgres
+//   still has as queued/placed from the Harness, which covers settlements missed while the sidecar was down.
 import type { Context } from "@earendil-works/chord/context";
 import type {
 	Conversation,
 	ConversationId,
 	ConversationRecord,
 	ConversationView,
+	ConversationWatch,
 	Cursor,
 	EntryId,
 	Harness,
@@ -26,9 +33,18 @@ import { log } from "./log.ts";
 export const MIRROR_CHANNEL = "durable_agent_mirror";
 
 type Attached = {
-	readonly stop: () => Promise<unknown>;
+	readonly watch: ConversationWatch;
 	seenEntries: Set<number>;
 	docHashes: Map<string, string>;
+	/** The last frame write failed; the reconcile pass rewrites the whole view. */
+	dirty: boolean;
+	/** Frame writes and reconcile rewrites of one conversation run one at a time, in order. */
+	writes: Promise<void>;
+};
+
+export type MirrorOptions = {
+	/** How often failed frame and settlement writes are retried. */
+	readonly reconcileMs?: number;
 };
 
 const json = (value: unknown): string | null => (value === undefined ? null : JSON.stringify(value));
@@ -38,19 +54,28 @@ export class Mirror {
 	readonly #harness: Harness;
 	readonly #config: Config;
 	readonly #context: Context;
-	readonly #attached = new Map<number, Attached>();
-	readonly #attaching = new Map<number, Promise<void>>();
+	readonly #attached = new Map<ConversationId, Attached>();
+	readonly #attaching = new Map<ConversationId, Promise<void>>();
 	readonly #waits = new Set<number>();
+	/** Submissions whose settlement did not reach Postgres, with their conversation; the reconcile pass retries them. */
+	readonly #unsettled = new Map<SubmissionId, ConversationId>();
+	readonly #reconcileMs: number;
+	#reconcileTimer: NodeJS.Timeout | undefined;
+	#reconciling = false;
 	#stopped = false;
 
-	constructor(pool: Pool, harness: Harness, config: Config, context: Context) {
+	constructor(pool: Pool, harness: Harness, config: Config, context: Context, options: MirrorOptions = {}) {
 		this.#pool = pool;
 		this.#harness = harness;
 		this.#config = config;
 		this.#context = context;
+		this.#reconcileMs = options.reconcileMs ?? 5_000;
 	}
 
-	/** Attach to every conversation in storage and re-arm waits for every unsettled submission. */
+	/**
+	 * Attach to every conversation in storage, re-arm waits for every unsettled submission, settle the rows Postgres
+	 * still shows as unsettled, and start the reconcile pass.
+	 */
 	async start(): Promise<void> {
 		// 1.3.0 exposes the conversation scan on a transaction only; this commit writes nothing.
 		let cursor: Cursor | undefined;
@@ -65,22 +90,51 @@ export class Mirror {
 			const submission = await this.#harness.submission(record.id, this.#context);
 			if (submission !== undefined) this.#awaitSettlement(submission, record.conversationId);
 		}
-		log.info("mirror started", { conversations: this.#attached.size, pendingSubmissions: inspection.submissions.length });
+		const stale = await this.#settleStaleRows();
+		this.#reconcileTimer = setInterval(() => void this.#reconcile(), this.#reconcileMs);
+		this.#reconcileTimer.unref();
+		log.info("mirror started", {
+			conversations: this.#attached.size,
+			pendingSubmissions: inspection.submissions.length,
+			staleRows: stale,
+		});
+	}
+
+	/** Rows left queued/placed by a settlement the mirror missed: a failed write, or one that landed while it was down. */
+	async #settleStaleRows(): Promise<number> {
+		const rows = await this.#pool.query<{ id: string; conversation_id: string }>(
+			"SELECT id, conversation_id FROM durable_agent_submissions WHERE status IN ('queued', 'placed')",
+		);
+		for (const row of rows.rows) {
+			const submission = await this.#harness.submission(Number(row.id) as SubmissionId, this.#context);
+			if (submission === undefined) log.warn("mirror: unsettled row unknown to the harness", { submissionId: row.id });
+			else this.#awaitSettlement(submission, Number(row.conversation_id) as ConversationId);
+		}
+		return rows.rows.length;
 	}
 
 	/**
 	 * Called from the Harness's `conversationCreated` hook, inside the creating commit. Attaching needs the commit to
-	 * have landed, so it is scheduled for the next turn and retried briefly until the record is readable.
+	 * have landed, so it is scheduled for the next turn and retried briefly until the record is readable. A failed attach
+	 * (Postgres) is logged and retried with backoff; nothing here may reject, an unhandled rejection would end the process.
 	 */
 	enqueue(record: ConversationRecord): void {
-		const attempt = async (left: number): Promise<void> => {
+		const attempt = async (left: number, failures: number): Promise<void> => {
 			if (this.#stopped) return;
-			const conversation = await this.#harness.conversation(record.id, this.#context);
-			if (conversation !== undefined) return this.attach(record.id);
-			if (left > 0) setTimeout(() => void attempt(left - 1), 50);
-			else log.warn("created conversation never became readable", { conversationId: record.id });
+			try {
+				const conversation = await this.#harness.conversation(record.id, this.#context);
+				if (conversation !== undefined) return await this.attach(record.id);
+				if (left > 0) setTimeout(() => void attempt(left - 1, failures), 50).unref();
+				else log.warn("created conversation never became readable", { conversationId: record.id });
+			} catch (error) {
+				if (this.#stopped) return;
+				// The conversation must end up mirrored: retry until the attach lands, backing off up to 30 s.
+				const delay = Math.min(100 * 2 ** failures, 30_000);
+				log.error("mirror: attach failed, retrying", { conversationId: record.id, delay, error });
+				setTimeout(() => void attempt(left, failures + 1), delay).unref();
+			}
 		};
-		setImmediate(() => void attempt(20));
+		setImmediate(() => void attempt(20, 0));
 	}
 
 	async attach(id: ConversationId): Promise<void> {
@@ -92,21 +146,25 @@ export class Mirror {
 		return promise;
 	}
 
+	/** Registers the conversation only after its row, first frame and watch are in place; otherwise leaves nothing. */
 	async #attach(id: ConversationId): Promise<void> {
 		const conversation = await this.#harness.conversation(id, this.#context);
 		if (conversation === undefined) return;
 		const watch = await conversation.watch(this.#context);
-		const attached: Attached = { stop: () => watch.stop(), seenEntries: new Set(), docHashes: new Map() };
+		const attached: Attached = { watch, seenEntries: new Set(), docHashes: new Map(), dirty: false, writes: Promise.resolve() };
+		try {
+			await this.#upsertConversation(watch.value.conversation);
+			const seeded = await this.#pool.query<{ id: string }>("SELECT id FROM durable_agent_entries WHERE conversation_id = $1", [id]);
+			for (const row of seeded.rows) attached.seenEntries.add(Number(row.id));
+			await this.#writeFrame(id, attached, watch.value);
+			watch.start((value) => this.#queueFrame(id, attached, () => value));
+		} catch (error) {
+			await watch.stop().catch(() => undefined);
+			throw error;
+		}
 		this.#attached.set(id, attached);
-
-		await this.#upsertConversation(watch.value.conversation);
-		const seeded = await this.#pool.query<{ id: string }>("SELECT id FROM durable_agent_entries WHERE conversation_id = $1", [id]);
-		for (const row of seeded.rows) attached.seenEntries.add(Number(row.id));
-
-		await this.#writeFrame(id, attached, watch.value);
-		watch.start((value) => this.#writeFrame(id, attached, value));
 		void watch.closed.then((end) => {
-			this.#attached.delete(id);
+			if (this.#attached.get(id) === attached) this.#attached.delete(id);
 			if (!this.#stopped) log.warn("conversation watch ended", { conversationId: id, end });
 		});
 	}
@@ -129,8 +187,36 @@ export class Mirror {
 		void submission
 			.wait(this.#context)
 			.then((record) => this.#writeSubmission(record, conversationId))
-			.catch((error) => log.error("mirror: submission wait failed", { submissionId: submission.id, error }))
+			.then(() => this.#unsettled.delete(submission.id))
+			.catch((error) => {
+				if (this.#stopped) return;
+				this.#unsettled.set(submission.id, conversationId);
+				log.error("mirror: submission settlement not mirrored, will retry", { submissionId: submission.id, error });
+			})
 			.finally(() => this.#waits.delete(submission.id));
+	}
+
+	/** Retries what failed, independent of agent activity: dirty conversations and unwritten settlements. */
+	async #reconcile(): Promise<void> {
+		if (this.#reconciling || this.#stopped) return;
+		this.#reconciling = true;
+		try {
+			for (const [id, attached] of this.#attached) {
+				if (attached.dirty) await this.#queueFrame(id, attached, () => attached.watch.value);
+			}
+			for (const [submissionId, conversationId] of this.#unsettled) {
+				if (this.#stopped) return;
+				const submission = await this.#harness.submission(submissionId, this.#context);
+				if (submission === undefined) {
+					this.#unsettled.delete(submissionId);
+					log.warn("mirror: unsettled submission unknown to the harness", { submissionId });
+				} else this.#awaitSettlement(submission, conversationId);
+			}
+		} catch (error) {
+			log.error("mirror: reconcile failed", { error });
+		} finally {
+			this.#reconciling = false;
+		}
 	}
 
 	async #writeSubmission(record: SubmissionRecord, conversationId: ConversationId): Promise<void> {
@@ -172,6 +258,21 @@ export class Mirror {
 		);
 	}
 
+	/** Queue a frame write behind the conversation's earlier ones; `view` is read when the write runs. */
+	#queueFrame(id: ConversationId, attached: Attached, view: () => ConversationView): Promise<void> {
+		attached.writes = attached.writes.then(() => this.#mirrorFrame(id, attached, view()));
+		return attached.writes;
+	}
+
+	async #mirrorFrame(id: ConversationId, attached: Attached, view: ConversationView): Promise<void> {
+		try {
+			await this.#writeFrame(id, attached, view);
+		} catch (error) {
+			log.error("mirror: frame write failed, reconcile will rewrite the view", { conversationId: id, error });
+		}
+	}
+
+	/** On failure, forgets what was mirrored and marks the conversation dirty, so the next write re-upserts everything. */
 	async #writeFrame(id: ConversationId, attached: Attached, view: ConversationView): Promise<void> {
 		const entries = view.entries.filter((entry) => !attached.seenEntries.has(entry.id));
 		const docs: { kind: string; body: string }[] = [];
@@ -180,7 +281,10 @@ export class Mirror {
 			const hash = JSON.stringify(body);
 			if (attached.docHashes.get(kind) !== hash) docs.push({ kind, body: hash });
 		}
-		if (entries.length === 0 && docs.length === 0) return;
+		if (entries.length === 0 && docs.length === 0) {
+			attached.dirty = false;
+			return;
+		}
 
 		let client: PoolClient | undefined;
 		try {
@@ -212,12 +316,13 @@ export class Mirror {
 			await client.query("COMMIT");
 			for (const entry of entries) attached.seenEntries.add(entry.id);
 			for (const doc of docs) attached.docHashes.set(doc.kind, doc.body);
+			attached.dirty = false;
 		} catch (error) {
 			await client?.query("ROLLBACK").catch(() => undefined);
-			// Forget what was mirrored; the next frame re-upserts the whole view and converges.
 			attached.seenEntries.clear();
 			attached.docHashes.clear();
-			log.error("mirror: frame write failed, will resync on next frame", { conversationId: id, error });
+			attached.dirty = true;
+			throw error;
 		} finally {
 			client?.release();
 		}
@@ -225,7 +330,8 @@ export class Mirror {
 
 	async stop(): Promise<void> {
 		this.#stopped = true;
-		await Promise.all([...this.#attached.values()].map((attached) => attached.stop()));
+		clearInterval(this.#reconcileTimer);
+		await Promise.all([...this.#attached.values()].map((attached) => attached.watch.stop()));
 		this.#attached.clear();
 	}
 }

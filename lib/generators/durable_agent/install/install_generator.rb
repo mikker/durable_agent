@@ -46,6 +46,9 @@ module DurableAgent
             bin/rails db:migrate
             bin/dev            # runs web, sidecar and relay from Procfile.dev (needs foreman or overmind)
 
+          The relay broadcasts from its own process, so config/cable.yml needs solid_cable or redis in
+          development too: the default async adapter never delivers its refreshes.
+
           Development and test derive the sidecar token from secret_key_base. In production set one:
 
             bin/rails credentials:edit     # durable_agent:

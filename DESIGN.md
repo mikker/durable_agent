@@ -88,7 +88,7 @@ durable_agent_submissions (id bigint pk, conversation_id fk, request_id text, ty
   entry_id bigint, answer_entry_id bigint, reason text, detail jsonb, created_at, updated_at)
 durable_agent_reports (id bigserial pk, type text, conversation_id bigint, task_id bigint, task_kind text,
   extension text, message text, info jsonb, created_at)
-durable_agent_credentials (provider_id text pk, credential jsonb, updated_at)   -- Rails has no model for this
+durable_agent_credentials (provider_id text pk, credential jsonb, updated_at)   -- encrypted envelope; Rails has no model
 durable_agent_settings (key text pk, value text, updated_at)                   -- device_id, schema_version
 ```
 
@@ -103,8 +103,14 @@ durable_agent_reports  {"id": 3, "type": "task_faulted", "conversationId": 7, "t
 Mirror semantics (as in the reference): entries inserted with ON CONFLICT DO NOTHING; documents upserted when
 their JSON changes; submissions inserted when made and updated when settled; unsettled submissions re-awaited
 on boot; every conversation in storage re-attached on boot; conversations created by tools picked up through
-the Harness `conversationCreated` hook; a failed frame write resets the in-memory bookkeeping so the next frame
-re-upserts everything.
+the Harness `conversationCreated` hook. Postgres failures converge without agent activity: an attach registers the
+conversation only after its row, first frame and watch are in place, so a failed attach leaves nothing behind and
+is retried (the HTTP caller sees the error; hook-driven attaches retry with backoff, capped at 30 s). A failed
+frame write resets the in-memory bookkeeping and marks the conversation dirty; a failed settlement write is
+remembered. A reconcile pass every 5 s rewrites the whole current view of each dirty conversation and re-reads
+each remembered settlement from the Harness. On boot, every `durable_agent_submissions` row still `queued` or
+`placed` is looked up in the Harness and written once it is settled there (an id the Harness no longer knows is
+logged and left). The sidecar logs, rather than dies on, unhandled rejections and idle pg client errors.
 
 ## Tools protocol
 
@@ -172,13 +178,25 @@ DurableAgent::Connection.new("openai").connected? / subscription? / unreachable?
 - Token default: `Rails.application.credentials.dig(:durable_agent, :token)`, then `ENV["DURABLE_AGENT_TOKEN"]`,
   then in development and test a value derived from `secret_key_base` (so both halves agree with zero setup).
   Production with none of these raises at boot of either half.
+- Credentials at rest: the sidecar stores each credential as `{"enc": 1, "type", "iv", "tag", "data"}`, AES-256-GCM
+  with the provider id as associated data, keyed by HKDF-SHA256(token, salt "durable_agent_credentials", info "v1").
+  `type` stays clear for `GET /auth`. Dumps and replicas hold ciphertext; the sidecar holds the key, so anyone with
+  the database and the token can decrypt. Rails never decrypts. Rotating the token makes stored sign-ins unreadable:
+  the sidecar logs a warning per provider and treats them as absent until the user signs in again. Plaintext rows
+  from before encryption are read and rewritten encrypted on the next modify.
 - Mirror models are read-only (`readonly?` true). `DurableAgent::Entry::HIDDEN_KINDS = %w[pi.system pi.reset]`;
   `transcript` = visible entries chronologically. `DurableAgent::MessageText` extracts text/tool calls from pi
   messages (string content or blocks of `{type: "text"|"thinking"|"toolCall"}`).
 - `DurableAgent::Client` wraps Net::HTTP. Errors: `DurableAgent::Error` (status, body), `Busy` (409),
   `UnknownModel` (422 on conversations, carries `suggestions`), `Unavailable` (connection refused / timeout).
-- `DurableAgent::Relay#run` does the LISTEN loop on a raw connection and dispatches to `config.on_mirror` /
-  `config.on_report`. Default callbacks: `Turbo::StreamsChannel.broadcast_refresh_to(conversation)`.
+- `DurableAgent::Relay#run` does the LISTEN loop on a raw connection it checks out (and never returns to the
+  pool) and dispatches to `config.on_mirror` / `config.on_report`. It waits 30 s at a time, heartbeats with
+  `SELECT 1` after a quiet wait, and on any connection error discards the connection and reconnects with backoff
+  (1 s doubling to 30 s, reset after a successful LISTEN). After a reconnect it calls `on_mirror` with empty
+  `entries:`/`docs:` and `submission: nil` for every conversation updated since the last contact, since NOTIFYs
+  sent during the outage are lost. `#stop` ends the loop; pool, wait, sleeper and clock are injectable for tests.
+  Default callbacks: `Turbo::StreamsChannel.broadcast_refresh_to(conversation)`, which needs a cross-process
+  Action Cable adapter (solid_cable or redis, not `async`) because the relay is its own process.
 - `DurableAgent::Sidecar.env` builds the hash above; `.command` returns `["node", <path to dist/sidecar.js>]`
   (the single place to swap for a compiled binary later); `.exec` replaces the process.
 - Rake tasks: `durable_agent:sidecar`, `durable_agent:relay`.
