@@ -1,32 +1,29 @@
-// Opens the pi-durable Harness this process owns: storage, model access, the extension registry, and the tool
-// environment. Everything the HTTP API and the mirror do goes through the Harness returned here.
+// Opens the pi-durable Harness this process owns: storage in the app's database, model access, the extension
+// registry, and the tool environment. Everything the HTTP API does goes through the Harness returned here.
 import { mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
 import type { Context } from "@earendil-works/chord/context";
 import type { CredentialStore, MutableModels } from "@earendil-works/pi-ai";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai/providers/faux";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
-import {
-	type ConversationRecord,
-	createRegistry,
-	type Harness as HarnessType,
-	Harness,
-	type ModelRef,
-} from "@earendil-works/pi-durable";
+import { createRegistry, type Harness as HarnessType, Harness, type ModelRef } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
-import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import type { Config } from "./config.ts";
+import type { Db } from "./db/index.ts";
+import { withBaseDocuments } from "./documents.ts";
+import { ChangeTracker, type Events } from "./events.ts";
 import { log } from "./log.ts";
 import { assertKnownModel } from "./models-check.ts";
-import { RailsTools } from "./tools.ts";
+import { openHarnessStorage } from "./storage.ts";
+import { type BootRetry, RailsTools } from "./tools.ts";
 
-export type HarnessCallbacks = {
-	/** Runs inside the creating commit; must not do async work against the Harness. Queue and act after. */
-	readonly onConversationCreated: (conversation: ConversationRecord) => void;
+export type HarnessDeps = {
+	readonly db: Db;
+	readonly events: Events;
 	/** `info` arrives from pi-durable releases newer than 1.3.0; it is `undefined` on 1.3.0. */
 	readonly onReport: (error: unknown, info?: unknown) => void;
+	readonly toolsRetry?: BootRetry;
 };
 
 export type OpenedHarness = {
@@ -57,10 +54,9 @@ export function createProcessModels(config: Config, credentials: CredentialStore
 export async function openHarness(
 	config: Config,
 	models: MutableModels,
-	callbacks: HarnessCallbacks,
+	{ db, events, onReport, toolsRetry }: HarnessDeps,
 	context: Context,
 ): Promise<OpenedHarness> {
-	await mkdir(dirname(config.storagePath), { recursive: true });
 	await mkdir(config.workspaceRoot, { recursive: true });
 
 	const model = config.model;
@@ -77,21 +73,29 @@ export async function openHarness(
 	}
 
 	const registry = createRegistry();
-	const tools = new RailsTools(registry, config.railsUrl, config.token);
-	await tools.load();
+	// Loaded by the caller, in the background: boot must not wait for Rails.
+	const tools = new RailsTools(registry, config.railsUrl, config.token, toolsRetry);
 
-	const storage = await openNodeSqliteStorage(config.storagePath);
+	const storage = new ChangeTracker(withBaseDocuments(await openHarnessStorage(db)), events);
 	const harness = await Harness.open(
 		storage,
 		{
 			models,
 			registry,
 			env: ({ cwd }) => new NodeExecutionEnv({ cwd: cwd ?? config.workspaceRoot }),
-			conversationCreated: (_tx, conversation) => callbacks.onConversationCreated(conversation),
-			onReport: callbacks.onReport,
+			onReport,
 		},
 		context,
 	);
 
-	return { harness, models, model, tools, close: (ctx) => harness.close(ctx) };
+	return {
+		harness,
+		models,
+		model,
+		tools,
+		close: async (ctx) => {
+			tools.stop();
+			await harness.close(ctx);
+		},
+	};
 }

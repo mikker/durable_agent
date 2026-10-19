@@ -7,18 +7,16 @@ export type Config = {
 	readonly port: number;
 	readonly host: string;
 	readonly token: string;
+	/** The app's database: `postgres://…` or `sqlite:///absolute/path` (see db/index.ts for every accepted form). */
 	readonly databaseUrl: string;
-	readonly storagePath: string;
-	/** cwd handed to the execution environment. No built-in tools use it in v0; the knob stays for later. */
+	/** cwd handed to the execution environment. No built-in tools use it in v1; the knob stays for later. */
 	readonly workspaceRoot: string;
 	/** Default model for new conversations. `faux/faux-1` runs pi-ai's scripted model, for offline development. */
 	readonly model: ModelRef;
 	/** Name shown to the user during Sign in with ChatGPT and sent to OpenAI as the agent name. */
 	readonly agentName: string;
-	/** Where Rails answers `/durable_agent/tools`; `undefined` runs without tools. */
+	/** Where Rails answers `/durable_agent/tools` and `/durable_agent/events`; `undefined` runs without either. */
 	readonly railsUrl: string | undefined;
-	/** `undefined` mirrors every document. */
-	readonly mirrorDocs: ReadonlySet<string> | undefined;
 };
 
 type Env = Readonly<Record<string, string | undefined>>;
@@ -39,25 +37,14 @@ export function loadConfig(source: Env = process.env): Config {
 		if (fallback !== undefined) return fallback;
 		throw new Error(`Missing required environment variable ${name}`);
 	};
-	const mirrorDocs = env("DURABLE_AGENT_MIRROR_DOCS", "all");
 	return {
 		port: Number(env("DURABLE_AGENT_PORT", "4010")),
 		host: env("DURABLE_AGENT_HOST", "127.0.0.1"),
 		token: env("DURABLE_AGENT_TOKEN"),
 		databaseUrl: env("DATABASE_URL"),
-		storagePath: resolve(env("DURABLE_AGENT_STORAGE_PATH", "storage/durable_agent.sqlite")),
 		workspaceRoot: resolve(env("DURABLE_AGENT_WORKSPACE_ROOT", "storage/durable_agent")),
 		model: parseModel(env("DURABLE_AGENT_MODEL", "openai/gpt-6.1-sol")),
 		agentName: env("DURABLE_AGENT_NAME", "durable_agent"),
 		railsUrl: source.DURABLE_AGENT_RAILS_URL || undefined,
-		mirrorDocs:
-			mirrorDocs === "all"
-				? undefined
-				: new Set(
-						mirrorDocs
-							.split(",")
-							.map((kind) => kind.trim())
-							.filter((kind) => kind !== ""),
-					),
 	};
 }

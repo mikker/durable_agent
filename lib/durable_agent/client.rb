@@ -22,7 +22,7 @@ module DurableAgent
   # The sidecar is not running or did not answer in time.
   class Unavailable < Error; end
 
-  # The sidecar's HTTP API v1. Rails sends commands here and reads the results from the mirror tables.
+  # The sidecar's HTTP API v1. Rails sends commands here and reads the results from the harness tables.
   class Client
     UNREACHABLE = [ Errno::ECONNREFUSED, Errno::ECONNRESET, Errno::EHOSTUNREACH, Net::OpenTimeout, Net::ReadTimeout, SocketError ]
 

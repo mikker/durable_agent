@@ -1,15 +1,17 @@
 import { serve } from "@hono/node-server";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { registerBunOAuthFlows } from "@earendil-works/pi-ai/bun-oauth";
-import pg from "pg";
 import { Logins } from "./auth.ts";
 import { loadConfig } from "./config.ts";
-import { installationDeviceId, PostgresCredentialStore, recordSchemaVersion } from "./credentials.ts";
+import { DbCredentialStore } from "./credentials.ts";
+import { openDatabase } from "./db/index.ts";
+import { Events } from "./events.ts";
 import { createProcessModels, openHarness } from "./harness.ts";
 import { log } from "./log.ts";
-import { Mirror } from "./mirror.ts";
 import { createReporter } from "./reports.ts";
 import { createServer } from "./server.ts";
+import { installationDeviceId, recordSchemaVersion } from "./settings.ts";
+import { MissingSchema } from "./storage.ts";
 
 // pi-ai loads its OAuth flows with a computed `import("./openai-chatgpt.js")` so web bundlers skip them. In the esbuild
 // bundle (dist/sidecar.js) those relative files do not exist; registering the flows statically keeps sign-in working
@@ -19,46 +21,46 @@ registerBunOAuthFlows();
 const context = BACKGROUND_CONTEXT;
 const config = loadConfig();
 
-const pool = new pg.Pool({ connectionString: config.databaseUrl, max: 5 });
-// pg emits `error` for idle clients (a Postgres restart, a dropped connection); unheard, it crashes the process.
-pool.on("error", (error) => log.error("postgres idle client error", { error }));
-// A stray rejection must not take down running agents; the mirror reconciles whatever it was writing.
+// A stray rejection must not take down running agents; the state they were writing is in the database.
 process.on("unhandledRejection", (error) => log.error("unhandled rejection", { error }));
-await pool.query("SELECT 1");
-// Fails here, with Postgres' "relation does not exist", when the durable_agent migration has not run.
-await recordSchemaVersion(pool);
 
-// Provider credentials (API keys, Sign in with ChatGPT tokens) live in Postgres, encrypted under a key derived from
-// the shared token, and survive redeploys.
-const models = createProcessModels(config, new PostgresCredentialStore(pool, config.token));
-const deviceId = await installationDeviceId(pool);
+const db = await openDatabase(config.databaseUrl).catch((error: unknown) => {
+	log.error("could not open the database named by DATABASE_URL", { error });
+	process.exit(1);
+});
+try {
+	await recordSchemaVersion(db);
+} catch (error) {
+	await stopBoot(isMissingTable(error) ? new MissingSchema(error) : error);
+}
+
+// Provider credentials (API keys, Sign in with ChatGPT tokens) live in the app's database, encrypted under a key
+// derived from the shared token, and survive redeploys.
+const models = createProcessModels(config, new DbCredentialStore(db, config.token));
+const deviceId = await installationDeviceId(db);
 const logins = new Logins(models, () => deviceId, config.agentName);
 
-// The mirror needs the Harness and the Harness's hooks need the mirror; the hook closes over a late-bound reference.
-let mirror: Mirror | undefined;
+const events = new Events({ railsUrl: config.railsUrl, token: config.token });
 const opened = await openHarness(
 	config,
 	models,
-	{
-		onConversationCreated: (record) => mirror?.enqueue(record),
-		onReport: createReporter(pool),
-	},
+	{ db, events, onReport: createReporter(db, events) },
 	context,
-);
-mirror = new Mirror(pool, opened.harness, config, context);
-await mirror.start();
+).catch(stopBoot);
 
 // Make sure the root conversation exists, so a Rails app that only ever wants one conversation can use id 1.
 await opened.harness.root(context, { agent: { model: opened.model } });
-await mirror.attach((await opened.harness.root(context)).id);
 
 // Continue any run the previous process left unfinished, and start the scheduler for sleeping tasks.
 opened.harness.resume();
 
+// Rails may not be listening yet (bin/dev starts both at once); the tools arrive when it is.
+void opened.tools.load();
+
 const app = createServer({
 	harness: opened.harness,
 	models: opened.models,
-	mirror,
+	db,
 	logins,
 	tools: opened.tools,
 	token: config.token,
@@ -66,7 +68,7 @@ const app = createServer({
 	context,
 });
 const server = serve({ fetch: app.fetch, port: config.port, hostname: config.host }, (info) =>
-	log.info("sidecar listening", { host: info.address, port: info.port, storage: config.storagePath, model: opened.model }),
+	log.info("sidecar listening", { host: info.address, port: info.port, database: db.dialect, model: opened.model }),
 );
 
 let shuttingDown = false;
@@ -76,11 +78,24 @@ const shutdown = async (signal: string): Promise<void> => {
 	log.info("shutting down", { signal });
 	server.close();
 	logins.dispose();
-	await mirror?.stop();
 	// Close commits nothing new; interrupted work stays pending and resumes on the next start.
 	await opened.close(context);
-	await pool.end();
+	await events.flush();
+	await db.close();
 	process.exit(0);
 };
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
 process.on("SIGINT", () => void shutdown("SIGINT"));
+
+/** SQLite's "no such table", Postgres' undefined_table: the install migration has not run. */
+function isMissingTable(error: unknown): boolean {
+	if (!(error instanceof Error)) return false;
+	return (error as Error & { code?: unknown }).code === "42P01" || /no such table/i.test(error.message);
+}
+
+async function stopBoot(error: unknown): Promise<never> {
+	if (error instanceof MissingSchema) log.error(error.message);
+	else log.error("sidecar failed to boot", { error });
+	await db.close().catch(() => undefined);
+	process.exit(1);
+}

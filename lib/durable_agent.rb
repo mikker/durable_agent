@@ -6,7 +6,6 @@ require "durable_agent/current"
 require "durable_agent/message_text"
 require "durable_agent/tool"
 require "durable_agent/sidecar"
-require "durable_agent/relay"
 
 module DurableAgent
   class << self
@@ -22,7 +21,7 @@ module DurableAgent
       @client ||= Client.new
     end
 
-    # Creates a conversation on the sidecar and returns its mirror row, which the sidecar writes before it answers.
+    # Creates a conversation on the sidecar and returns its row, which the sidecar commits before it answers.
     # Without a model the sidecar uses its default, which `durable_agent:sidecar` sets from config.model.
     def start(model: nil, instructions: nil)
       response = client.create_conversation(model: model, instructions: instructions)

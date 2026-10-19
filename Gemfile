@@ -4,6 +4,8 @@ source "https://rubygems.org"
 gemspec
 
 gem "puma"
+gem "pg"
+gem "sqlite3"
 gem "propshaft"
 gem "solid_cable"
 

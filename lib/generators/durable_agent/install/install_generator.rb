@@ -8,7 +8,7 @@ module DurableAgent
 
       source_root File.expand_path("templates", __dir__)
 
-      PROCFILE_LINES = [ "sidecar: bin/rails durable_agent:sidecar", "relay: bin/rails durable_agent:relay" ].freeze
+      SIDECAR = "sidecar: bin/rails durable_agent:sidecar"
 
       def self.next_migration_number(dirname)
         ActiveRecord::Generators::Base.next_migration_number(dirname)
@@ -27,14 +27,13 @@ module DurableAgent
         route %(mount DurableAgent::Engine => "/durable_agent") unless File.read(routes).include?("DurableAgent::Engine")
       end
 
-      def add_processes
+      def add_sidecar_process
         procfile = File.join(destination_root, "Procfile.dev")
 
-        if File.exist?(procfile)
-          missing = PROCFILE_LINES.reject { |line| File.read(procfile).include?(line) }
-          append_to_file "Procfile.dev", missing.map { "#{it}\n" }.join, force: true if missing.any?
-        else
-          create_file "Procfile.dev", ([ "web: bin/rails server" ] + PROCFILE_LINES).map { "#{it}\n" }.join
+        if !File.exist?(procfile)
+          create_file "Procfile.dev", "web: bin/rails server\n#{SIDECAR}\n"
+        elsif !File.read(procfile).include?(SIDECAR)
+          append_to_file "Procfile.dev", "#{SIDECAR}\n", force: true
         end
       end
 
@@ -44,17 +43,15 @@ module DurableAgent
           durable_agent is installed. Next:
 
             bin/rails db:migrate
-            bin/dev            # runs web, sidecar and relay from Procfile.dev (needs foreman or overmind)
-
-          The relay broadcasts from its own process, so config/cable.yml needs solid_cable or redis in
-          development too: the default async adapter never delivers its refreshes.
+            bin/dev            # runs web and sidecar from Procfile.dev (needs foreman or overmind)
 
           Development and test derive the sidecar token from secret_key_base. In production set one:
 
             bin/rails credentials:edit     # durable_agent:
                                            #   token: #{SecureRandom.hex(32)}
 
-          or export DURABLE_AGENT_TOKEN for both the web and the sidecar processes.
+          or export DURABLE_AGENT_TOKEN for both the web and the sidecar processes. If production uses
+          force_ssl or config.hosts, see the note at the end of config/initializers/durable_agent.rb.
         TEXT
       end
     end

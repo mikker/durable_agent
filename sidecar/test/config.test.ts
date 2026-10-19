@@ -16,20 +16,22 @@ test("the environment maps onto the config, with the documented defaults", () =>
 	assert.equal(config.port, 4010);
 	assert.equal(config.host, "127.0.0.1");
 	assert.equal(config.railsUrl, undefined);
-	assert.equal(config.mirrorDocs, undefined);
-	assert.match(config.storagePath, /storage\/durable_agent\.sqlite$/);
+	assert.equal(config.databaseUrl, "postgres://localhost/x");
+	assert.equal("storagePath" in config, false);
+	assert.equal("mirrorDocs" in config, false);
 
 	const custom = loadConfig({
 		DATABASE_URL: "postgres://localhost/x",
 		DURABLE_AGENT_TOKEN: "s",
 		DURABLE_AGENT_PORT: "4999",
 		DURABLE_AGENT_RAILS_URL: "http://127.0.0.1:3000",
-		DURABLE_AGENT_MIRROR_DOCS: "pi.agent, pi.inbox",
 	});
 	assert.deepEqual(custom.model, { provider: "openai", modelId: "gpt-6.1-sol" });
 	assert.equal(custom.port, 4999);
 	assert.equal(custom.railsUrl, "http://127.0.0.1:3000");
-	assert.deepEqual([...(custom.mirrorDocs ?? [])], ["pi.agent", "pi.inbox"]);
 
 	assert.throws(() => loadConfig({ DATABASE_URL: "postgres://localhost/x" }), /DURABLE_AGENT_TOKEN/);
+	assert.throws(() => loadConfig({ DURABLE_AGENT_TOKEN: "s" }), /DATABASE_URL/);
+	const sqlite = loadConfig({ DATABASE_URL: "sqlite:///app/storage/development.sqlite3", DURABLE_AGENT_TOKEN: "s" });
+	assert.equal(sqlite.databaseUrl, "sqlite:///app/storage/development.sqlite3");
 });

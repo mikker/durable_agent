@@ -36,6 +36,33 @@ class DurableAgent::ConfigurationTest < ActiveSupport::TestCase
     assert_equal "set", @config.token
   end
 
+  test "a blank token is refused, never compared" do
+    @config.token = ""
+    assert_raises(DurableAgent::Configuration::MissingToken) { @config.token }
+
+    @config.token = "  "
+    assert_raises(DurableAgent::Configuration::MissingToken) { @config.token }
+  end
+
+  test "on_change broadcasts a refresh to the conversation by default" do
+    conversation = durable_agent_conversations(:idle)
+    streams = capture_turbo_stream_broadcasts(conversation) { @config.on_change.call(conversation) }
+    assert_equal [ "refresh" ], streams.map { it["action"] }
+  end
+
+  test "on_report broadcasts to the report's conversation, when it has one" do
+    report = durable_agent_reports(:faulted)
+    streams = capture_turbo_stream_broadcasts(report.conversation) { @config.on_report.call(report) }
+    assert_equal [ "refresh" ], streams.map { it["action"] }
+
+    assert_nothing_raised { @config.on_report.call(durable_agent_reports(:session)) }
+  end
+
+  test "callbacks can be replaced" do
+    @config.on_change = ->(conversation) { conversation.id }
+    assert_equal 900001, @config.on_change.call(durable_agent_conversations(:idle))
+  end
+
   test "tools resolve class names lazily" do
     @config.tools = [ "DurableAgent::Tool" ]
     assert_equal [ DurableAgent::Tool ], @config.tools

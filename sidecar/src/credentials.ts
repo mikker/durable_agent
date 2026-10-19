@@ -1,13 +1,13 @@
-// pi-ai CredentialStore backed by Postgres, so OAuth tokens from Sign in with ChatGPT survive restarts and
+// pi-ai CredentialStore backed by the app's database, so OAuth tokens from Sign in with ChatGPT survive restarts and
 // redeploys. Modifications to one provider are serialized, as pi-ai's in-memory store does, because a token
 // refresh and a login can race.
 //
 // Credentials are encrypted at rest with AES-256-GCM under a key derived from the shared DURABLE_AGENT_TOKEN, which
-// lives outside Postgres, so dumps, replicas and read-only database users see only ciphertext. `type` stays in the
-// clear because list() reads it in SQL and it is not secret.
-import { createCipheriv, createDecipheriv, hkdfSync, randomBytes, randomUUID } from "node:crypto";
+// lives outside the database, so dumps, replicas and read-only database users see only ciphertext. `type` stays in
+// the clear because list() reports it without decrypting, and it is not secret.
+import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto";
 import type { AuthOperationOptions, Credential, CredentialInfo, CredentialStore } from "@earendil-works/pi-ai";
-import type { Pool } from "pg";
+import type { Db } from "./db/index.ts";
 import { log } from "./log.ts";
 
 type Envelope = { enc: 1; type: Credential["type"]; iv: string; tag: string; data: string };
@@ -16,16 +16,25 @@ type Loaded = { credential: Credential | undefined; legacy: boolean };
 
 const isEnvelope = (stored: Stored): stored is Envelope => (stored as Partial<Envelope>).enc === 1;
 
+function parseStored(providerId: string, text: string): Stored | undefined {
+	try {
+		return JSON.parse(text) as Stored;
+	} catch (error) {
+		log.warn("stored credential is not JSON; treating it as absent", { provider: providerId, error });
+		return undefined;
+	}
+}
+
 const KEY_SALT = "durable_agent_credentials";
 const KEY_INFO = "v1";
 
-export class PostgresCredentialStore implements CredentialStore {
-	readonly #pool: Pool;
+export class DbCredentialStore implements CredentialStore {
+	readonly #db: Db;
 	readonly #key: Buffer;
 	readonly #chains = new Map<string, Promise<unknown>>();
 
-	constructor(pool: Pool, token: string) {
-		this.#pool = pool;
+	constructor(db: Db, token: string) {
+		this.#db = db;
 		this.#key = Buffer.from(hkdfSync("sha256", token, KEY_SALT, KEY_INFO, 32));
 	}
 
@@ -62,11 +71,11 @@ export class PostgresCredentialStore implements CredentialStore {
 	}
 
 	async #load(providerId: string): Promise<Loaded> {
-		const result = await this.#pool.query<{ credential: Stored }>(
-			"SELECT credential FROM durable_agent_credentials WHERE provider_id = $1",
-			[providerId],
+		const row = await this.#db.get<{ credential: string }>(
+			"SELECT credential FROM durable_agent_credentials WHERE provider_id = ?",
+			providerId,
 		);
-		const stored = result.rows[0]?.credential;
+		const stored = row === undefined ? undefined : parseStored(providerId, row.credential);
 		if (stored === undefined) return { credential: undefined, legacy: false };
 		if (isEnvelope(stored)) return { credential: this.#decrypt(providerId, stored), legacy: false };
 		return { credential: stored, legacy: true };
@@ -94,10 +103,13 @@ export class PostgresCredentialStore implements CredentialStore {
 
 	async list(options?: AuthOperationOptions): Promise<readonly CredentialInfo[]> {
 		options?.signal?.throwIfAborted();
-		const result = await this.#pool.query<{ provider_id: string; type: Credential["type"] }>(
-			"SELECT provider_id, credential->>'type' AS type FROM durable_agent_credentials ORDER BY provider_id",
+		const rows = await this.#db.all<{ provider_id: string; credential: string }>(
+			"SELECT provider_id, credential FROM durable_agent_credentials ORDER BY provider_id",
 		);
-		return result.rows.map((row) => ({ providerId: row.provider_id, type: row.type }));
+		return rows.flatMap((row) => {
+			const stored = parseStored(row.provider_id, row.credential);
+			return stored === undefined ? [] : [{ providerId: row.provider_id, type: stored.type }];
+		});
 	}
 
 	modify(
@@ -114,10 +126,11 @@ export class PostgresCredentialStore implements CredentialStore {
 				// A plaintext row from before encryption is rewritten even when fn keeps it.
 				const write = next ?? (legacy ? current : undefined);
 				if (write !== undefined) {
-					await this.#pool.query(
-						`INSERT INTO durable_agent_credentials (provider_id, credential) VALUES ($1, $2)
-						 ON CONFLICT (provider_id) DO UPDATE SET credential = EXCLUDED.credential, updated_at = now()`,
-						[providerId, JSON.stringify(this.#encrypt(providerId, write))],
+					await this.#db.run(
+						`INSERT INTO durable_agent_credentials (provider_id, credential, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+						 ON CONFLICT (provider_id) DO UPDATE SET credential = excluded.credential, updated_at = excluded.updated_at`,
+						providerId,
+						JSON.stringify(this.#encrypt(providerId, write)),
 					);
 				}
 				return next ?? current;
@@ -130,32 +143,9 @@ export class PostgresCredentialStore implements CredentialStore {
 		return this.#serialize(
 			providerId,
 			async () => {
-				await this.#pool.query("DELETE FROM durable_agent_credentials WHERE provider_id = $1", [providerId]);
+				await this.#db.run("DELETE FROM durable_agent_credentials WHERE provider_id = ?", providerId);
 			},
 			options,
 		);
 	}
-}
-
-/** The stable UUID OpenAI identifies this installation by. Created on first use, then constant. */
-export async function installationDeviceId(pool: Pool): Promise<string> {
-	const inserted = await pool.query<{ value: string }>(
-		`INSERT INTO durable_agent_settings (key, value) VALUES ('device_id', $1)
-		 ON CONFLICT (key) DO UPDATE SET value = durable_agent_settings.value RETURNING value`,
-		[randomUUID()],
-	);
-	const value = inserted.rows[0]?.value;
-	if (value === undefined) throw new Error("could not read or create the installation device id");
-	return value;
-}
-
-/** The mirror schema this sidecar writes. Rails' migration creates the same tables; both record version 1. */
-export const SCHEMA_VERSION = 1;
-
-/** Record the schema version, leaving a value Rails (or an earlier boot) wrote alone. */
-export async function recordSchemaVersion(pool: Pool): Promise<void> {
-	await pool.query(
-		`INSERT INTO durable_agent_settings (key, value) VALUES ('schema_version', $1) ON CONFLICT (key) DO NOTHING`,
-		[String(SCHEMA_VERSION)],
-	);
 }

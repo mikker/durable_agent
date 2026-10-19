@@ -1,5 +1,6 @@
-// The HTTP API v1 Rails calls (DESIGN.md, "Sidecar HTTP API v1"). Commands only: Rails reads agent state from the
-// mirror tables, never from here. Anything not listed below is a 404.
+// The HTTP API v1 Rails calls (DESIGN.md, "Sidecar HTTP API v1"). Commands only: Rails reads agent state from
+// pi-durable's tables in the shared database, never from here. Anything not listed below is a 404.
+import { timingSafeEqual } from "node:crypto";
 import type { Context as PiContext } from "@earendil-works/chord/context";
 import type { Models } from "@earendil-works/pi-ai";
 import {
@@ -13,15 +14,15 @@ import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import type { Logins } from "./auth.ts";
 import { parseModel } from "./config.ts";
-import { SCHEMA_VERSION } from "./credentials.ts";
-import type { Mirror } from "./mirror.ts";
+import type { Db } from "./db/index.ts";
 import { assertKnownModel, UnknownModel } from "./models-check.ts";
+import { readHarnessSchemaVersion, readSchemaVersion } from "./settings.ts";
 import type { RailsTools } from "./tools.ts";
 
 export type ServerDeps = {
 	readonly harness: Harness;
 	readonly models: Models;
-	readonly mirror: Mirror;
+	readonly db: Db;
 	readonly logins: Logins;
 	readonly tools: RailsTools;
 	readonly token: string;
@@ -59,12 +60,18 @@ const modelRef = (value: unknown): ModelRef | undefined => {
 	throw badRequest("model must be {provider, modelId}");
 };
 
-export function createServer({ harness, models, mirror, logins, tools, token, defaultModel, context }: ServerDeps) {
+const sameSecret = (given: string | undefined, expected: string): boolean => {
+	const a = Buffer.from(given ?? "");
+	const b = Buffer.from(expected);
+	return a.length === b.length && timingSafeEqual(a, b);
+};
+
+export function createServer({ harness, models, db, logins, tools, token, defaultModel, context }: ServerDeps) {
 	const app = new Hono();
 
 	app.use("*", async (c, next) => {
 		if (c.req.path === "/health") return next();
-		if (c.req.header("authorization") !== `Bearer ${token}`) throw new HTTPException(401, { message: "unauthorized" });
+		if (!sameSecret(c.req.header("authorization"), `Bearer ${token}`)) throw new HTTPException(401, { message: "unauthorized" });
 		return next();
 	});
 
@@ -84,7 +91,15 @@ export function createServer({ harness, models, mirror, logins, tools, token, de
 		return found;
 	};
 
-	app.get("/health", (c) => c.json({ ok: true, schemaVersion: SCHEMA_VERSION, model: defaultModel }));
+	app.get("/health", async (c) =>
+		c.json({
+			ok: true,
+			schemaVersion: await readSchemaVersion(db),
+			harnessSchemaVersion: await readHarnessSchemaVersion(db),
+			database: db.dialect,
+			model: defaultModel,
+		}),
+	);
 
 	// Conversations -------------------------------------------------------------------------------------------------
 
@@ -100,7 +115,6 @@ export function createServer({ harness, models, mirror, logins, tools, token, de
 			{ ownership: { kind: "ownerless" }, agent: { model, ...(instructions === undefined ? {} : { instructions }) } },
 			context,
 		);
-		await mirror.attach(created.id);
 		return c.json({ id: created.id }, 201);
 	});
 
@@ -122,9 +136,9 @@ export function createServer({ harness, models, mirror, logins, tools, token, de
 			content: input.content as InputSubmissionDraft["content"],
 			...(whenBusy === undefined ? {} : { whenBusy: whenBusy as WhenBusy }),
 		};
-		// Idempotent: the Harness returns the existing submission for a request id it has seen.
+		// Idempotent: the Harness returns the existing submission for a request id it has seen. The submission row is
+		// committed by the time submit() resolves, so Rails can find it as soon as it reads the 202.
 		const submission = await found.submit(draft, context);
-		mirror.track(submission, found, draft);
 		const record = await submission.status(context);
 		return c.json({ id: submission.id, status: record.status }, 202);
 	});

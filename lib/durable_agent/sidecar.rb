@@ -17,10 +17,8 @@ module DurableAgent
         "DURABLE_AGENT_PORT" => config.port.to_s,
         "DURABLE_AGENT_RAILS_URL" => config.rails_url.to_s,
         "DURABLE_AGENT_MODEL" => config.model.to_s,
-        "DURABLE_AGENT_STORAGE_PATH" => config.storage_path.to_s,
         "DURABLE_AGENT_WORKSPACE_ROOT" => config.workspace_root.to_s,
-        "DURABLE_AGENT_NAME" => config.agent_name.to_s,
-        "DURABLE_AGENT_MIRROR_DOCS" => Array(config.mirror_docs).join(",")
+        "DURABLE_AGENT_NAME" => config.agent_name.to_s
       }.merge(ENV.slice(*PASS_THROUGH))
     end
 
@@ -32,7 +30,7 @@ module DurableAgent
     end
 
     def exec
-      FileUtils.mkdir_p(File.dirname(DurableAgent.config.storage_path))
+      FileUtils.mkdir_p(DurableAgent.config.workspace_root)
       Kernel.exec(env, *command)
     end
 
@@ -40,24 +38,38 @@ module DurableAgent
       DurableAgent::Engine.root.join("sidecar")
     end
 
+    # The app's primary database, which the sidecar opens too: pi-durable's tables live there.
     def database_url(db_config = ActiveRecord::Base.connection_db_config)
       return db_config.url if db_config.respond_to?(:url) && db_config.url.present?
 
-      config = db_config.configuration_hash
-      userinfo = [ config[:username], config[:password] ].compact.map { |part| ERB::Util.url_encode(part.to_s) }.join(":")
-      host = config[:host].presence || "localhost"
-      query = {}
+      case db_config.adapter
+      when "sqlite3" then sqlite_url(db_config.configuration_hash)
+      when "postgresql" then postgres_url(db_config.configuration_hash)
+      else raise ArgumentError, "durable_agent needs a postgresql or sqlite3 database, not #{db_config.adapter}"
+      end
+    end
 
-      # A socket directory cannot sit in the authority part of the URL; libpq and node-postgres take it as ?host=.
-      if host.start_with?("/")
-        query[:host] = host
-        host = ""
+    private
+      def sqlite_url(config)
+        "sqlite://#{File.expand_path(config[:database].to_s, Rails.root)}"
       end
 
-      authority = [ userinfo.presence, host ].compact.join("@")
-      authority += ":#{config[:port]}" if config[:port].present?
-      url = "postgres://#{authority}/#{ERB::Util.url_encode(config[:database].to_s)}"
-      query.any? ? "#{url}?#{URI.encode_www_form(query)}" : url
-    end
+      def postgres_url(config)
+        userinfo = [ config[:username], config[:password] ].compact.map { |part| ERB::Util.url_encode(part.to_s) }.join(":")
+        host = config[:host].presence || "localhost"
+        query = {}
+
+        # A socket directory cannot sit in the authority part of the URL; libpq and node-postgres take it as ?host=.
+        if host.start_with?("/")
+          query[:host] = host
+          host = ""
+        end
+        query[:sslmode] = config[:sslmode] if config[:sslmode].present?
+
+        authority = [ userinfo.presence, host ].compact.join("@")
+        authority += ":#{config[:port]}" if config[:port].present?
+        url = "postgres://#{authority}/#{ERB::Util.url_encode(config[:database].to_s)}"
+        query.any? ? "#{url}?#{URI.encode_www_form(query)}" : url
+      end
   end
 end

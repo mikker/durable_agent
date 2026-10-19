@@ -1,5 +1,6 @@
 // The tools protocol against a fake Rails: definitions come from GET /durable_agent/tools, a scripted faux tool call
-// runs through POST /durable_agent/tools/:name, and the result lands in the mirror as a pi.tool-result entry.
+// runs through POST /durable_agent/tools/:name, and the result lands in durable_agent_entries as a pi.tool-result
+// entry. Boot fetches retry with backoff until Rails listens.
 import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -8,10 +9,9 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { createRegistry } from "@earendil-works/pi-durable";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
-import type pg from "pg";
-import { PostgresCredentialStore } from "../src/credentials.ts";
+import { DbCredentialStore } from "../src/credentials.ts";
 import { RailsTools, type ToolDefinition } from "../src/tools.ts";
-import { bootTestSidecar, type TestSidecar, testConfig, testPool, until } from "./helpers.ts";
+import { bootTestSidecar, type TestSidecar } from "./sidecar.ts";
 
 const context = BACKGROUND_CONTEXT;
 const TOKEN = "tools-test-token";
@@ -34,7 +34,6 @@ let definitions: ToolDefinition[] = [
 
 let rails: Server;
 let railsUrl: string;
-let pool: pg.Pool;
 let sidecar: TestSidecar;
 
 const readBody = async (request: IncomingMessage): Promise<string> => {
@@ -64,33 +63,35 @@ before(async () => {
 	await new Promise<void>((resolve) => rails.listen(0, "127.0.0.1", resolve));
 	railsUrl = `http://127.0.0.1:${(rails.address() as AddressInfo).port}`;
 
-	pool = await testPool();
-	const models = createModels({ credentials: new PostgresCredentialStore(pool, "t") });
-	const faux = fauxProvider({ tokensPerSecond: 1000 });
-	models.setProvider(faux.provider);
-	faux.setResponses([
-		fauxAssistantMessage(
-			[
-				fauxToolCall("lookup_invoice", { number: "INV-1042" }, { id: "call-1" }),
-				fauxToolCall("explode", {}, { id: "call-2" }),
-			],
-			{ stopReason: "toolUse" },
-		),
-		fauxAssistantMessage([fauxText("Invoice INV-1042 totals 99.")]),
-	]);
-	sidecar = await bootTestSidecar(pool, await testConfig({ token: TOKEN, railsUrl }), models);
+	sidecar = await bootTestSidecar({
+		config: { token: TOKEN, railsUrl },
+		models: (db) => {
+			const models = createModels({ credentials: new DbCredentialStore(db, "t") });
+			const faux = fauxProvider({ tokensPerSecond: 1000 });
+			models.setProvider(faux.provider);
+			faux.setResponses([
+				fauxAssistantMessage(
+					[
+						fauxToolCall("lookup_invoice", { number: "INV-1042" }, { id: "call-1" }),
+						fauxToolCall("explode", {}, { id: "call-2" }),
+					],
+					{ stopReason: "toolUse" },
+				),
+				fauxAssistantMessage([fauxText("Invoice INV-1042 totals 99.")]),
+			]);
+			return models;
+		},
+	});
 });
 
 after(async () => {
 	await sidecar.close();
-	await pool.end();
 	await new Promise((resolve) => rails.close(resolve));
 });
 
-test("a scripted tool call runs through Rails over HTTP and its result is mirrored", async () => {
+test("a scripted tool call runs through Rails over HTTP and its result is stored", async () => {
 	const { harness, model } = sidecar.opened;
 	const conversation = await harness.createConversation({ ownership: { kind: "ownerless" }, agent: { model } }, context);
-	await sidecar.mirror.attach(conversation.id);
 	const submission = await conversation.submit({ type: "input", content: "What does INV-1042 total?", requestId: "tools-1" }, context);
 	const settled = await submission.wait(context);
 	assert.equal(settled.status, "done");
@@ -101,20 +102,16 @@ test("a scripted tool call runs through Rails over HTTP and its result is mirror
 	assert.deepEqual(lookup.body, { arguments: { number: "INV-1042" }, conversation_id: conversation.id, call_id: "call-1" });
 	assert.ok(calls.some((call) => call.name === "explode"));
 
-	// The tool result message is the entry's model message (the `model` column), an array of one.
+	// The tool result message is the entry record's model message, an array of one.
 	type Message = { toolCallId?: string; isError?: boolean; content?: { text?: string }[] };
-	type Row = { model: Message[] };
-	let rows: Row[] = [];
-	await until("tool results mirrored", async () => {
-		rows = (
-			await pool.query<Row>(
-				"SELECT model FROM durable_agent_entries WHERE conversation_id = $1 AND kind = 'pi.tool-result' ORDER BY id",
-				[conversation.id],
-			)
-		).rows;
-		return rows.length === 2;
-	});
-	const byCall = new Map(rows.map((row) => [row.model[0]?.toolCallId, row.model[0]]));
+	type Entry = { kind: string; model: Message[] };
+	const rows = await sidecar.db.all<{ record: string }>(
+		"SELECT record FROM durable_agent_entries WHERE conversation_id = ? ORDER BY id",
+		conversation.id,
+	);
+	const results = rows.map((row) => JSON.parse(row.record) as Entry).filter((entry) => entry.kind === "pi.tool-result");
+	assert.equal(results.length, 2);
+	const byCall = new Map(results.map((entry) => [entry.model[0]?.toolCallId, entry.model[0]]));
 	const ok = byCall.get("call-1");
 	assert.equal(ok?.isError, false);
 	assert.equal(ok?.content?.[0]?.text, JSON.stringify({ number: "INV-1042", total: 99 }));
@@ -142,8 +139,56 @@ test("reload replaces the rails extension's tools in place", async () => {
 	);
 });
 
-test("an unreachable Rails means no tools at boot and a rejected reload", async () => {
-	const tools = new RailsTools(createRegistry(), "http://127.0.0.1:1", TOKEN);
+const QUICK_RETRY = { initialMs: 50, maxMs: 200, totalMs: 300 };
+
+test("an unreachable Rails means no tools once the boot retry gives up, and a rejected reload", async () => {
+	const tools = new RailsTools(createRegistry(), "http://127.0.0.1:1", TOKEN, QUICK_RETRY);
+	const started = Date.now();
 	assert.deepEqual(await tools.load(), []);
+	assert.ok(Date.now() - started >= 150, "load retried before giving up");
 	await assert.rejects(tools.reload());
+});
+
+test("the boot load keeps retrying until Rails starts listening", async () => {
+	// Reserve a free port, then leave it closed so the first attempt is refused.
+	const late = createServer((request, response) => {
+		if (request.headers.authorization === `Bearer ${TOKEN}` && request.url === "/durable_agent/tools") {
+			response.writeHead(200, { "content-type": "application/json" });
+			response.end(JSON.stringify(definitions));
+			return;
+		}
+		response.writeHead(404).end();
+	});
+	await new Promise<void>((resolve) => late.listen(0, "127.0.0.1", resolve));
+	const port = (late.address() as AddressInfo).port;
+	await new Promise((resolve) => late.close(resolve));
+	let attempts = 0;
+	const countingFetch = globalThis.fetch;
+	globalThis.fetch = (...args) => {
+		attempts += 1;
+		return countingFetch(...args);
+	};
+	const tools = new RailsTools(createRegistry(), `http://127.0.0.1:${port}`, TOKEN, { initialMs: 100, maxMs: 400, totalMs: 5_000 });
+	try {
+		const loading = tools.load();
+		await new Promise((resolve) => setTimeout(resolve, 150));
+		assert.ok(attempts >= 1, "a first attempt was made and failed");
+		await new Promise<void>((resolve) => late.listen(port, "127.0.0.1", resolve));
+		assert.deepEqual(await loading, ["lookup_invoice", "explode"]);
+		assert.ok(attempts >= 2);
+	} finally {
+		globalThis.fetch = countingFetch;
+		tools.stop();
+		await new Promise((resolve) => late.close(resolve));
+	}
+});
+
+test("stop ends a boot retry that is waiting", async () => {
+	const tools = new RailsTools(createRegistry(), "http://127.0.0.1:1", TOKEN, { initialMs: 10_000, maxMs: 10_000, totalMs: 60_000 });
+	const loading = tools.load();
+	await new Promise((resolve) => setTimeout(resolve, 50));
+	const started = Date.now();
+	tools.stop();
+	assert.deepEqual(await loading, []);
+	assert.ok(Date.now() - started < 1_000);
 });

@@ -3,21 +3,25 @@
 Crash-safe, resumable AI agent conversations for Rails.
 
 durable_agent packages [pi-durable](https://github.com/earendil-works/pi), a durable agent runtime written in
-TypeScript, as one gem: a Rails engine plus the sidecar process that runs the agents. The sidecar owns agent
-state and writes every committed frame into tables in your own Postgres, so your app reads conversations with
-plain Active Record and gets live updates over Turbo. Tools are Ruby classes.
+TypeScript, as one gem: a Rails engine plus the sidecar process that runs the agents. pi-durable keeps its state
+in your app's own database, Postgres or SQLite, in tables your migration creates. The sidecar is their only
+writer; your app reads conversations with plain Active Record and gets live updates over Turbo. Tools are Ruby
+classes.
 
 ```
- Rails ──HTTP commands──▶ sidecar (node) ──writes──▶ durable_agent_* tables ──NOTIFY──▶ relay ──Turbo──▶ browser
-   ▲                         │
-   └──── tool calls ─────────┘
+browser ◀─Turbo── Puma ──HTTP commands─────────────────▶ sidecar (node)
+                   │   ◀──GET/POST /durable_agent/tools──   │
+                   │   ◀──POST /durable_agent/events─────   │
+                   │ reads                                  │ writes
+                   ▼                                        ▼
+                  your database (Postgres or SQLite), durable_agent_* tables
 ```
 
-Status: v0. `DESIGN.md` is the contract both halves are built against.
+Status: v1. `DESIGN.md` is the contract both halves are built against.
 
 ## Requirements
 
-- Rails 8, Postgres
+- Rails 8, with Postgres or SQLite (the app brings its own `pg` or `sqlite3` gem; durable_agent depends on neither)
 - Node 22.19 or newer on the machine that runs the sidecar
 
 ## Install
@@ -30,10 +34,10 @@ bin/rails db:migrate
 
 The generator:
 
-- copies `db/migrate/*_create_durable_agent_tables.rb` (seven `durable_agent_*` tables),
+- copies `db/migrate/*_create_durable_agent_tables.rb` (twelve `durable_agent_*` tables, the same on either database),
 - writes `config/initializers/durable_agent.rb`,
 - mounts the engine: `mount DurableAgent::Engine => "/durable_agent"`,
-- adds `sidecar:` and `relay:` lines to `Procfile.dev` (creating it if needed),
+- adds a `sidecar:` line to `Procfile.dev` (creating it with `web:` and `sidecar:` if needed),
 - prints how to set a production token.
 
 ## Use
@@ -46,7 +50,7 @@ conversation.say("Summarize invoice INV-1042", request_id: message.id)
 conversation.say("Actually, only the total", request_id: other.id, when_busy: :steer)   # :followUp, :steer, :reject
 conversation.abort
 
-conversation.transcript      # visible entries, oldest first
+conversation.transcript      # visible entries, oldest first (an Array)
 conversation.busy?           # a run is in progress
 conversation.streaming_message
 conversation.running_tools
@@ -54,13 +58,13 @@ conversation.inbox
 conversation.last_failure    # the newest unanswered input, with #explanation
 ```
 
-`say` is idempotent on `request_id`: retrying with the same id returns the same submission. It returns a
-`DurableAgent::Submission`; when the mirror has not written the row yet it is an unsaved record carrying the id and
-status the sidecar answered with.
+`say` is idempotent on `request_id`: retrying with the same id returns the same submission. It returns the
+`DurableAgent::Submission` row, which the sidecar commits before it answers. Find it later with
+`conversation.submissions.for_request(id)`.
 
 Every entry has `kind` (`pi.user`, `pi.assistant`, `pi.tool-result`, ...), `text`, `tool_calls`, `tool_name` and
-`error?`. In a view, subscribe to the conversation and the default relay callback refreshes the page as the
-mirror changes:
+`error?`. In a view, subscribe to the conversation and the default `on_change` callback refreshes the page
+whenever the sidecar commits a change to it:
 
 ```erb
 <%= turbo_stream_from @chat.conversation %>
@@ -81,7 +85,7 @@ All inherit from `DurableAgent::Error` (`status`, `body`):
 
 ### Provider sign-in
 
-Sign-ins (including OAuth refresh tokens) are stored in your app's Postgres database, in
+Sign-ins (including OAuth refresh tokens) are stored in your app's database, in
 `durable_agent_credentials`, encrypted by the sidecar with AES-256-GCM under a key derived from the shared
 `DURABLE_AGENT_TOKEN`. Database dumps, replicas and read-only database users see ciphertext. Rails has no model for
 the table and never decrypts it. This is not a vault: the sidecar process holds the key, and anyone with both the
@@ -146,20 +150,18 @@ DurableAgent.configure do |config|
   config.host = "127.0.0.1"                # sidecar bind address
   config.port = 4010
   config.url = "http://127.0.0.1:4010"     # where Rails reaches the sidecar; defaults to host and port
-  config.rails_url = "http://127.0.0.1:3000"  # where the sidecar reaches Rails for tools
+  config.rails_url = "http://127.0.0.1:3000"  # where the sidecar reaches Rails for tools and change events
   config.token = "..."
-  config.storage_path = "storage/durable_agent.sqlite"
   config.workspace_root = "storage/durable_agent"
   config.agent_name = "MyApp"              # shown on provider consent screens
-  config.mirror_docs = "all"               # or %w[ pi.live pi.inbox ]
-  config.on_mirror = ->(conversation, entries:, docs:, submission:) { ... }
+  config.on_change = ->(conversation) { ... }
   config.on_report = ->(report) { ... }
 end
 ```
 
 The token is read from `credentials.durable_agent.token`, then `ENV["DURABLE_AGENT_TOKEN"]`. In development and
 test it falls back to a value derived from `secret_key_base`, so both processes agree with no setup. In
-production, booting without one raises.
+production, booting without one raises, and so does a blank one.
 
 The token is also the key for stored provider sign-ins (see [Provider sign-in](#provider-sign-in)). Rotating it, or
 moving from the development fallback to a real token, makes the stored sign-ins unreadable: the sidecar logs a
@@ -176,73 +178,93 @@ bin/rails credentials:edit
 ```
 web: bin/rails server
 sidecar: bin/rails durable_agent:sidecar
-relay: bin/rails durable_agent:relay
 ```
 
 `durable_agent:sidecar` derives the sidecar's whole environment from Rails (`DurableAgent::Sidecar.env`):
-`DATABASE_URL` from `database.yml`, the token, bind address, Rails URL, model, storage paths, agent name, mirrored
-documents, and passes `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` through. It then replaces itself with
-`node sidecar/dist/sidecar.js` (or the TypeScript source when no bundle is built).
+`DATABASE_URL` from the primary database in `database.yml` (`postgres://…`, with `sslmode` when set, or
+`sqlite:///absolute/path`), the token, bind address, Rails URL, model and agent name, and passes
+`OPENAI_API_KEY` / `ANTHROPIC_API_KEY` through. It then replaces itself with `node sidecar/dist/sidecar.js` (or
+the TypeScript source when no bundle is built). Run exactly one sidecar per app.
 
-The sidecar keeps its harness in a SQLite file (`storage_path`): put it on a persistent volume. Run exactly one
-sidecar and one relay.
+The sidecar refuses to boot until the tables exist ("run bin/rails db:migrate"). An unknown default model is
+logged and the sidecar keeps running. Missing provider credentials are not an error: inputs settle as
+unanswered with reason `no_model` until someone signs in.
 
-An unknown default model is logged and the sidecar keeps running. Missing provider credentials are not an error:
-inputs settle as unanswered with reason `no_model` until someone signs in.
+SQLite suits development, test and single-host production: both processes open the same file (WAL, 5 s busy
+timeout, as Rails 8 configures it). Use Postgres when the web and sidecar processes run on different hosts.
 
-## How the mirror works
+### Production
 
-The sidecar is the only writer of agent state. After each committed frame it writes the mirror tables in your
-database and raises `NOTIFY durable_agent_mirror`:
+The sidecar calls Rails over plain HTTP at `rails_url` (loopback by default). If you use `config.force_ssl`,
+keep `/durable_agent` out of the HTTPS redirect; if you set `config.hosts`, allow the sidecar's host. In
+`config/environments/production.rb`:
 
-| Table | Holds |
-|---|---|
-| `durable_agent_conversations` | one row per conversation, including ones tools created (`owner_conversation_id`) |
-| `durable_agent_entries` | the immutable transcript, inserted once |
-| `durable_agent_documents` | current value of each conversation document (`pi.live`, `pi.inbox`, `pi.agent`, ...) |
-| `durable_agent_submissions` | every input Rails sent, from queued to done or unanswered |
-| `durable_agent_reports` | faults the harness reported (also `NOTIFY durable_agent_reports`) |
-| `durable_agent_credentials` | provider sign-ins, encrypted with a key derived from the token; Rails has no model for it |
-| `durable_agent_settings` | `device_id`, `schema_version` |
+```ruby
+config.ssl_options = { redirect: { exclude: ->(request) { request.path.start_with?("/durable_agent") } } }
+config.hosts << "127.0.0.1"
+```
 
-IDs are pi's own, so the mirror models (`DurableAgent::Conversation`, `Entry`, `Document`, `Submission`, `Report`)
-are read-only: a Rails write would be overwritten by the next frame. On boot the sidecar re-attaches every
-conversation and re-awaits unsettled submissions, so a crash loses nothing that was committed.
+## How it works
 
-The relay LISTENs on both channels and calls `config.on_mirror(conversation, entries:, docs:, submission:)` and
-`config.on_report(report)`. Both default to `Turbo::StreamsChannel.broadcast_refresh_to(conversation)`. Replace
-them to broadcast your own partials or to notify other systems.
+pi-durable's storage lives in your database. The sidecar runs pi-durable's own storage core over these tables,
+so there is one copy of the state and nothing to keep in sync:
 
-The relay holds one database connection of its own. When no notification arrives for 30 seconds it sends a
-heartbeat (`SELECT 1`), so a silently dropped connection is noticed. On any connection failure it reports the
-error to `Rails.error`, discards the connection, and reconnects with backoff (1 s doubling to 30 s). Postgres does
-not queue a NOTIFY for a listener that is gone, so after reconnecting the relay calls `on_mirror` once for every
-conversation updated since it last heard from the database, with `entries: []`, `docs: []` and `submission: nil`.
-A custom `on_mirror` must accept such a frame; the default only needs the conversation. Reports raised during an
-outage are not replayed. The relay does not work through a transaction-pooling PgBouncer, which drops LISTEN.
+| Table | Holds | Model |
+|---|---|---|
+| `durable_agent_conversations` | one row per conversation, including ones tools created (`owner_conversation_id`) | `Conversation` |
+| `durable_agent_entries` | the immutable transcript | `Entry` |
+| `durable_agent_tasks` | durable work: runs, tool calls, compactions | `Task` |
+| `durable_agent_submissions` | every input Rails sent, from queued to done or unanswered | `Submission` |
+| `durable_agent_documents`, `_document_revisions` | conversation documents (`pi.live`, `pi.inbox`, `pi.agent`, ...) | `Document`, `Document::Revision` |
+| `durable_agent_record_ids`, `_durable_schema`, `_durable_metadata` | pi-durable's bookkeeping | |
+| `durable_agent_reports` | faults the harness reported | `Report` |
+| `durable_agent_credentials` | provider sign-ins, encrypted; Rails has no model for it | |
+| `durable_agent_settings` | `device_id`, `schema_version` | |
 
-Broadcasts come from the relay process, not from Puma, so Action Cable's `async` adapter (the Rails default for
-development in `config/cable.yml`) cannot deliver them: it only reaches subscribers in its own process. Use
-`solid_cable` or `redis` in development as well as production.
+Rails owns the schema: the migration creates every table and the sidecar never runs DDL. The sidecar owns the
+rows: every model is read-only, and a write from Rails would bypass the harness. Ids are pi's own. Records keep
+pi-durable's shapes as JSON text (`record`, `content`, `info`), and a few indexed columns are JSON-encoded
+strings (`kind`, `request_id`, `key_value`); the models decode them, and scopes such as `for_request` and
+`of_kind` encode their arguments. Kind filtering on entries (`visible`, `of_kind`) happens in Ruby and returns
+arrays. On boot the sidecar re-attaches every conversation and re-awaits unsettled submissions, so a crash loses
+nothing that was committed.
 
-## Limits of v0
+pi-durable stores a document as a base revision plus deltas. The sidecar folds every delta into a new base
+before it commits, so **a document's current value is the content of its newest base revision**, which is what
+`Document#value` and `conversation.document(kind)` read. A document whose newest revision is a delta (a
+rewindable document that does not checkpoint) raises `DurableAgent::Document::HistoryNotSupported`; none of the
+`pi.*` documents Rails reads do.
+
+After each commit the sidecar posts the ids it touched to `POST /durable_agent/events`
+(`{"conversations": [7], "reports": [3]}`), authenticated with the shared token. Puma calls
+`config.on_change(conversation)` and `config.on_report(report)` for each id that exists. Both default to
+`Turbo::StreamsChannel.broadcast_refresh_to(conversation)`; replace them to broadcast your own partials or to
+notify other systems. Callback errors go to `Rails.error` and never fail the request. Because the broadcast
+happens inside Puma, the default `async` cable adapter works in development. Events are a hint, debounced and
+retried once: the state is already in the database, and the next event or page load shows anything a dropped
+event missed.
+
+## Limits of v1
 
 - One sidecar per app, one set of provider credentials for the whole app (no per-user credentials).
 - No compaction, reset or task-graph routes; no SSE event stream; no usage endpoint.
-- No UI: the engine only serves the tool endpoints the sidecar calls.
+- A forked conversation's inherited entries are not followed: `entries` are its own.
+- No UI: the engine only serves the tool and event endpoints the sidecar calls.
 - No MCP. Tools are Ruby classes only.
 - The workspace root is reserved for built-in tools and unused.
 
 ## Development
 
 ```sh
-bin/rails db:create db:migrate     # dummy app on Postgres: durable_agent_development / durable_agent_test
 (cd sidecar && npm install)        # enables the round-trip test
-bin/rails test
+bin/rails test                     # SQLite (test/dummy/storage/test.sqlite3)
+DURABLE_AGENT_DB=postgres bin/rails db:create
+DURABLE_AGENT_DB=postgres bin/rails test   # Postgres: durable_agent_test
+bundle exec rake test:all          # both
 ```
 
 The round-trip test boots the real sidecar on `faux/faux-1` against the test database; it skips when
-`sidecar/node_modules` is missing.
+`sidecar/node_modules` is missing or `node` is not on the PATH.
 
 ## License
 

@@ -1,14 +1,32 @@
 require "test_helper"
 
 class DurableAgent::EntryTest < ActiveSupport::TestCase
-  test "mirror rows are read-only" do
-    assert_raises(ActiveRecord::ReadOnlyRecord) { durable_agent_entries(:question).update!(kind: "x") }
+  test "harness rows are read-only" do
+    assert_raises(ActiveRecord::ReadOnlyRecord) { durable_agent_entries(:question).update!(head: 1) }
+  end
+
+  test "fields come from the record" do
+    answer = durable_agent_entries(:answer_with_tool)
+
+    assert_equal "pi.assistant", answer.kind
+    assert_equal 900600, answer.by_task_id
+    assert_equal 900100, durable_agent_entries(:system).head
+    assert_equal({ "usage" => { "total" => 12 } }, durable_agent_entries(:answer).data)
+    assert_nil durable_agent_entries(:question).data
   end
 
   test "hidden kinds" do
     assert_not durable_agent_entries(:system).visible?
     assert durable_agent_entries(:question).visible?
     assert_equal %w[ pi.system pi.reset ], DurableAgent::Entry::HIDDEN_KINDS
+  end
+
+  test "visible and of_kind filter a relation into an array" do
+    entries = durable_agent_conversations(:idle).entries.chronologically
+
+    assert_equal [ 900101, 900102, 900103, 900104 ], entries.visible.map(&:id)
+    assert_equal [ 900102, 900104 ], entries.of_kind("pi.assistant").map(&:id)
+    assert_equal [ 900100, 900101 ], entries.of_kind("pi.system", "pi.user").map(&:id)
   end
 
   test "text, tool calls, and tool results" do

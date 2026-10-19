@@ -145,16 +145,29 @@ export function railsExtension(definitions: readonly ToolDefinition[], railsUrl:
 	});
 }
 
+export type BootRetry = {
+	readonly initialMs: number;
+	readonly maxMs: number;
+	readonly totalMs: number;
+};
+
+// `bin/dev` starts node before Puma listens, so the first fetches at boot are expected to fail.
+export const BOOT_RETRY: BootRetry = { initialMs: 500, maxMs: 10_000, totalMs: 60_000 };
+
 /** Owns the "rails" extension in a registry: installs it once with no tools, then swaps in what Rails reports. */
 export class RailsTools {
 	readonly #registry: Registry;
 	readonly #railsUrl: string | undefined;
 	readonly #token: string;
+	readonly #retry: BootRetry;
+	readonly #stopped = new AbortController();
+	#loaded = false;
 
-	constructor(registry: Registry, railsUrl: string | undefined, token: string) {
+	constructor(registry: Registry, railsUrl: string | undefined, token: string, retry: BootRetry = BOOT_RETRY) {
 		this.#registry = registry;
 		this.#railsUrl = railsUrl;
 		this.#token = token;
+		this.#retry = retry;
 		registry.install(railsExtension([], railsUrl, token));
 	}
 
@@ -163,22 +176,55 @@ export class RailsTools {
 		if (this.#railsUrl === undefined) return [];
 		const definitions = await fetchDefinitions(this.#railsUrl, this.#token);
 		this.#registry.install(railsExtension(definitions, this.#railsUrl, this.#token));
+		this.#loaded = true;
 		const names = definitions.map((definition) => definition.name);
 		log.info("tools loaded", { tools: names });
 		return names;
 	}
 
-	/** Boot: a missing or unreachable Rails is a warning, not a failure. */
+	/**
+	 * Boot: retries with backoff until Rails answers or the retry budget runs out, then runs with no tools until
+	 * `/tools/reload`. Never rejects; callers do not await it. Stops early once a reload succeeded or on `stop()`.
+	 */
 	async load(): Promise<string[]> {
 		if (this.#railsUrl === undefined) {
 			log.warn("DURABLE_AGENT_RAILS_URL is not set; running with no tools");
 			return [];
 		}
-		try {
-			return await this.reload();
-		} catch (error) {
-			log.warn("could not fetch tool definitions from Rails; running with no tools", { railsUrl: this.#railsUrl, error });
-			return [];
+		const deadline = Date.now() + this.#retry.totalMs;
+		let delay = this.#retry.initialMs;
+		for (;;) {
+			try {
+				return await this.reload();
+			} catch (error) {
+				if (Date.now() + delay > deadline) {
+					log.warn("could not fetch tool definitions from Rails; running with no tools", { railsUrl: this.#railsUrl, error });
+					return [];
+				}
+			}
+			if (!(await this.#sleep(delay)) || this.#loaded) return [];
+			delay = Math.min(delay * 2, this.#retry.maxMs);
 		}
+	}
+
+	stop(): void {
+		this.#stopped.abort();
+	}
+
+	/** `false` when stopped while sleeping. */
+	#sleep(ms: number): Promise<boolean> {
+		const signal = this.#stopped.signal;
+		if (signal.aborted) return Promise.resolve(false);
+		return new Promise((resolve) => {
+			const timer = setTimeout(() => {
+				signal.removeEventListener("abort", stop);
+				resolve(true);
+			}, ms);
+			const stop = () => {
+				clearTimeout(timer);
+				resolve(false);
+			};
+			signal.addEventListener("abort", stop, { once: true });
+		});
 	}
 }

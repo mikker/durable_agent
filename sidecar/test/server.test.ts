@@ -2,23 +2,21 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import type pg from "pg";
 import { Logins } from "../src/auth.ts";
 import { createServer } from "../src/server.ts";
-import { bootTestSidecar, type TestSidecar, testConfig, testPool } from "./helpers.ts";
+import { TEST_DIALECT } from "./helpers.ts";
+import { bootTestSidecar, type TestSidecar } from "./sidecar.ts";
 
 const TOKEN = "server-test-token";
-let pool: pg.Pool;
 let sidecar: TestSidecar;
 let app: ReturnType<typeof createServer>;
 
 before(async () => {
-	pool = await testPool();
-	sidecar = await bootTestSidecar(pool, await testConfig({ token: TOKEN }));
+	sidecar = await bootTestSidecar({ config: { token: TOKEN } });
 	app = createServer({
 		harness: sidecar.opened.harness,
 		models: sidecar.opened.models,
-		mirror: sidecar.mirror,
+		db: sidecar.db,
 		logins: new Logins(sidecar.opened.models, () => "device", "test"),
 		tools: sidecar.opened.tools,
 		token: TOKEN,
@@ -29,7 +27,6 @@ before(async () => {
 
 after(async () => {
 	await sidecar.close();
-	await pool.end();
 });
 
 /** `token: null` sends no Authorization header. */
@@ -43,15 +40,24 @@ const call = (method: string, path: string, body?: unknown, token: string | null
 		...(body === undefined ? {} : { body: JSON.stringify(body) }),
 	});
 
-test("health needs no token and reports the schema version and default model", async () => {
+test("health needs no token and reports both schema versions, the database and the default model", async () => {
 	const response = await call("GET", "/health", undefined, null);
 	assert.equal(response.status, 200);
-	assert.deepEqual(await response.json(), { ok: true, schemaVersion: 1, model: { provider: "faux", modelId: "faux-1" } });
+	assert.deepEqual(await response.json(), {
+		ok: true,
+		schemaVersion: 2,
+		harnessSchemaVersion: 1,
+		database: TEST_DIALECT,
+		model: { provider: "faux", modelId: "faux-1" },
+	});
 });
 
 test("everything else needs the bearer token", async () => {
 	assert.equal((await call("GET", "/auth", undefined, null)).status, 401);
 	assert.equal((await call("POST", "/conversations", {}, "wrong")).status, 401);
+	assert.equal((await call("POST", "/conversations", {}, `${TOKEN}x`)).status, 401);
+	assert.equal((await call("GET", "/auth", undefined, "")).status, 401);
+	assert.equal((await call("GET", "/auth")).status, 200);
 });
 
 test("routes outside the v1 contract are 404", async () => {
@@ -86,6 +92,12 @@ test("conversations take submissions idempotently by request_id, and abort", asy
 	assert.equal(first.status, 202);
 	const submission = (await first.json()) as { id: number; status: string };
 	assert.equal(typeof submission.status, "string");
+	// The row is committed before the 202, so a reader of the database finds it at once.
+	const row = await sidecar.db.get<{ conversation_id: number; request_id: string }>(
+		"SELECT conversation_id, request_id FROM durable_agent_submissions WHERE id = ?",
+		submission.id,
+	);
+	assert.deepEqual({ ...row }, { conversation_id: id, request_id: JSON.stringify("r-1") });
 	const again = await call("POST", `/conversations/${id}/submissions`, { content: "Hi", request_id: "r-1" });
 	assert.equal(((await again.json()) as { id: number }).id, submission.id);
 

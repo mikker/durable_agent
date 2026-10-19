@@ -6,10 +6,10 @@ Gem::Specification.new do |spec|
   spec.authors     = [ "Mikkel Malmberg" ]
   spec.email       = [ "mikkel@brnbw.com" ]
   spec.homepage    = "https://github.com/mikker/durable_agent"
-  spec.summary     = "A durable AI agent runtime for Rails: pi-durable as a bundled sidecar, mirrored into Postgres."
+  spec.summary     = "A durable AI agent runtime for Rails: pi-durable as a bundled sidecar, in your own database."
   spec.description = "Crash-safe, resumable agent conversations for Rails. Ships the pi-durable runtime as a sidecar " \
-                     "process inside the gem, mirrors every committed frame into your Postgres, broadcasts over Turbo, " \
-                     "and lets you write tools in Ruby."
+                     "process inside the gem that keeps its state in your app's database, Postgres or SQLite, which " \
+                     "Rails reads with Active Record. Broadcasts over Turbo, and lets you write tools in Ruby."
   spec.license     = "MIT"
 
   spec.metadata["homepage_uri"] = spec.homepage
@@ -25,5 +25,5 @@ Gem::Specification.new do |spec|
 
   spec.add_dependency "rails", ">= 8.0"
   spec.add_dependency "turbo-rails", ">= 2.0"
-  spec.add_dependency "pg", ">= 1.5"
+  # No database adapter: the app brings pg or sqlite3, as it already does for itself.
 end

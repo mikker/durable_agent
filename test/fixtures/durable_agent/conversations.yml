@@ -1,9 +1,24 @@
-# High ids so the real sidecar, which numbers from 1, never collides in the round-trip test.
+# High ids so the real sidecar, which numbers from 2, never collides in the round-trip test.
+# `record` is pi-durable's ConversationRecord as JSON text.
+<% json = ->(value) { value.to_json.to_json } %>
 idle:
   id: 900001
+  record: <%= json.({ id: 900001 }) %>
 
 busy:
   id: 900002
+  record: <%= json.({ id: 900002 }) %>
 
 failed:
   id: 900003
+  record: <%= json.({ id: 900003 }) %>
+
+forked:
+  id: 900004
+  record: <%= json.({ id: 900004, parent: { conversationId: 900001, at: 900102 } }) %>
+
+owned:
+  id: 900005
+  owner_conversation_id: 900002
+  owner_task_id: 900601
+  record: <%= json.({ id: 900005, owner: { conversationId: 900002, taskId: 900601 } }) %>

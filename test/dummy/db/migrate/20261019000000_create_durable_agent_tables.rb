@@ -1,51 +1,97 @@
-# The durable_agent_* tables mirror pi-durable's committed state. The sidecar is their only writer; Rails reads.
-# IDs are pi's own integer ids (no sequence, `default: nil`), so a row points straight at the harness record. Matches the gem's
-# sidecar/sql/schema.sql (mirror schema v1).
+# The first nine tables are pi-durable's own storage schema (version 1) under the durable_agent_ prefix: the
+# sidecar runs pi-durable's storage core over them, so names, columns and indexes must match it. Rails owns the
+# DDL and the sidecar never runs any; the sidecar is the only writer, Rails reads. Ids are pi's (no sequences).
+# JSON lives in text columns, never jsonb, which rejects \u0000 that a model may produce. No foreign keys:
+# pi-durable writes the rows of one commit in its own order. No data: the sidecar seeds the singletons at boot.
 class CreateDurableAgentTables < ActiveRecord::Migration[8.1]
   def change
+    create_table :durable_agent_durable_schema, id: false do |t|
+      t.integer :singleton, primary_key: true
+      t.integer :version, null: false
+    end
+
+    create_table :durable_agent_durable_metadata, id: false do |t|
+      t.integer :singleton, primary_key: true
+      t.text :next_id, null: false            # pi stores it as text: ids can exceed 2^53 in principle
+      t.bigint :next_seq, null: false
+    end
+
+    create_table :durable_agent_record_ids, id: false do |t|
+      t.bigint :id, primary_key: true, default: nil
+      t.text :record_type, null: false        # conversation | entry | task | submission | document
+    end
+
     create_table :durable_agent_conversations, id: false do |t|
       t.bigint :id, primary_key: true, default: nil
-      t.bigint :parent_conversation_id
-      t.bigint :parent_at_entry_id
       t.bigint :owner_conversation_id
       t.bigint :owner_task_id
-      t.timestamps default: -> { "now()" }
+      t.text :record, null: false             # ConversationRecord JSON: {id, parent?: {conversationId, at}, owner?, ...}
+      t.index [ :owner_conversation_id, :id ], name: "durable_agent_conversations_by_owner_conversation"
+      t.index [ :owner_task_id, :id ], name: "durable_agent_conversations_by_owner_task"
     end
 
     create_table :durable_agent_entries, id: false do |t|
       t.bigint :id, primary_key: true, default: nil
-      t.references :conversation, null: false, foreign_key: { to_table: :durable_agent_conversations }, index: false
-      t.text :kind, null: false
-      t.jsonb :data
-      t.jsonb :model
-      t.bigint :head_entry_id
-      t.bigint :by_task_id
-      t.datetime :created_at, null: false, default: -> { "now()" }
-      t.index [ :conversation_id, :id ]
+      t.bigint :conversation_id, null: false
+      t.bigint :head
+      t.bigint :commit_seq, null: false
+      t.text :record, null: false             # EntryRecord JSON: {id, conversationId, kind, data?, model?, head?, byTaskId?}
+      t.index [ :conversation_id, :id ], order: { id: :desc }, name: "durable_agent_entries_by_conversation"
+      t.index [ :conversation_id, :id ], order: { id: :desc }, name: "durable_agent_entry_heads_by_conversation", where: "head IS NOT NULL"
     end
 
-    create_table :durable_agent_documents, primary_key: [ :conversation_id, :kind ] do |t|
-      t.references :conversation, null: false, foreign_key: { to_table: :durable_agent_conversations }, index: false
-      t.text :kind, null: false
-      t.jsonb :body, null: false
-      t.datetime :updated_at, null: false, default: -> { "now()" }
+    create_table :durable_agent_tasks, id: false do |t|
+      t.bigint :id, primary_key: true, default: nil
+      t.bigint :conversation_id, null: false
+      t.text :kind, null: false               # JSON-encoded string, e.g. "\"pi.run\""
+      t.text :status, null: false             # pending | running | waiting | completing | terminal
+      t.integer :abort_requested, null: false # 0 | 1
+      t.integer :background, null: false      # 0 | 1
+      t.text :record, null: false
+      t.index [ :status, :id ], name: "durable_agent_tasks_by_status"
+      t.index [ :conversation_id, :id ], name: "durable_agent_tasks_by_conversation"
+      t.index [ :kind, :id ], name: "durable_agent_tasks_by_kind"
+      t.index [ :abort_requested, :id ], name: "durable_agent_tasks_by_abort_requested"
+      t.index [ :background, :id ], name: "durable_agent_tasks_by_background"
     end
 
     create_table :durable_agent_submissions, id: false do |t|
       t.bigint :id, primary_key: true, default: nil
-      t.references :conversation, null: false, foreign_key: { to_table: :durable_agent_conversations }, index: false
-      t.text :request_id
-      t.text :type, null: false
-      t.text :status, null: false
-      t.bigint :entry_id
-      t.bigint :answer_entry_id
-      t.text :reason
-      t.jsonb :detail
-      t.timestamps default: -> { "now()" }
-      t.index [ :conversation_id, :id ]
-      t.index :request_id
+      t.bigint :conversation_id, null: false
+      t.text :request_id                      # JSON-encoded string, e.g. "\"42\""; NULL when the harness made it
+      t.text :status, null: false             # queued | placed | done | unanswered
+      t.text :record, null: false             # SubmissionRecord JSON: {id, conversationId, requestId?, type, status, entry?, answer?, reason?, detail?}
+      t.index [ :conversation_id, :request_id ], name: "durable_agent_submissions_by_request"
+      t.index [ :conversation_id, :id ], name: "durable_agent_submissions_by_conversation"
+      t.index [ :status, :id ], name: "durable_agent_submissions_by_status"
     end
 
+    create_table :durable_agent_documents, id: false do |t|
+      t.bigint :id, primary_key: true, default: nil
+      t.text :kind, null: false               # JSON-encoded string, e.g. "\"pi.live\""
+      t.integer :family, null: false          # 0 = unkeyed, 1 = keyed
+      t.text :key_value, null: false          # JSON-encoded key, "\"\"" when unkeyed
+      t.text :scope_kind, null: false         # session | conversation | task
+      t.bigint :owner_id, null: false         # 0, the conversation id, or the task id
+      t.bigint :created_at, null: false       # commit seq, not a time
+      t.bigint :retired_at                    # commit seq, not a time
+      t.text :record, null: false             # DocumentRecord JSON: {id, kind, scope: {kind, conversationId?|taskId?}, key?, history, fork?, createdAt, retiredAt?}
+      t.index [ :kind, :scope_kind, :owner_id, :family, :key_value, :created_at, :retired_at ], order: { created_at: :desc },
+        name: "durable_agent_documents_by_address"
+      t.index [ :scope_kind, :owner_id, :id ], name: "durable_agent_documents_by_scope"
+      t.index [ :scope_kind, :owner_id, :kind, :id ], name: "durable_agent_documents_by_scope_kind"
+    end
+
+    create_table :durable_agent_document_revisions, primary_key: [ :document_id, :seq ] do |t|
+      t.bigint :document_id, null: false
+      t.bigint :seq, null: false
+      t.text :kind, null: false               # base | delta
+      t.bigint :version, null: false
+      t.text :content, null: false            # base: the value as JSON; delta: chord ops as JSON
+      t.index [ :document_id, :kind, :seq ], order: { seq: :desc }, name: "durable_agent_document_revisions_by_kind"
+    end
+
+    # Written by the sidecar through its database facade.
     create_table :durable_agent_reports do |t|
       t.text :type, null: false
       t.bigint :conversation_id
@@ -53,25 +99,24 @@ class CreateDurableAgentTables < ActiveRecord::Migration[8.1]
       t.text :task_kind
       t.text :extension
       t.text :message, null: false
-      t.jsonb :info, null: false
-      t.datetime :created_at, null: false, default: -> { "now()" }
+      t.text :info, null: false               # JSON text
+      t.datetime :created_at, null: false
       t.index [ :conversation_id, :id ]
     end
 
-    # Provider credentials (OAuth tokens) the sidecar stores, encrypted with a key derived from DURABLE_AGENT_TOKEN,
-    # so dumps and replicas hold ciphertext. Rails has no model for this table and never decrypts it; connection
-    # status comes from the sidecar's GET /auth.
+    # Provider sign-ins, encrypted by the sidecar with a key derived from DURABLE_AGENT_TOKEN. Rails has no model
+    # for this table and never decrypts it; connection status comes from the sidecar's GET /auth.
     create_table :durable_agent_credentials, id: false do |t|
       t.text :provider_id, primary_key: true
-      t.jsonb :credential, null: false
-      t.datetime :updated_at, null: false, default: -> { "now()" }
+      t.text :credential, null: false         # the encrypted envelope as JSON text
+      t.datetime :updated_at, null: false
     end
 
     # device_id and schema_version, written by the sidecar.
     create_table :durable_agent_settings, id: false do |t|
       t.text :key, primary_key: true
       t.text :value, null: false
-      t.datetime :updated_at, null: false, default: -> { "now()" }
+      t.datetime :updated_at, null: false
     end
   end
 end

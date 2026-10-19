@@ -14,3 +14,22 @@ namespace :sidecar do
   end
 end
 task build: "sidecar:build"
+
+# The suite runs on either database; database.yml picks the adapter from DURABLE_AGENT_DB.
+desc "Run the tests on SQLite"
+task :test do
+  sh({ "DURABLE_AGENT_DB" => "sqlite" }, "bin/rails test")
+end
+
+namespace :test do
+  desc "Run the tests on Postgres (durable_agent_test)"
+  task :postgres do
+    sh({ "DURABLE_AGENT_DB" => "postgres", "RAILS_ENV" => "test" }, "bin/rails db:create")
+    sh({ "DURABLE_AGENT_DB" => "postgres" }, "bin/rails test")
+  end
+
+  desc "Run the tests on SQLite, then on Postgres"
+  task all: [ :test, :postgres ]
+end
+
+task default: :test
