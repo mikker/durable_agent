@@ -5,11 +5,13 @@ module DurableAgent
     attr_writer :model, :tools, :url, :rails_url, :token, :host, :port, :workspace_root, :agent_name,
       :on_change, :on_report
 
-    def model = @model || "openai/gpt-6.1-sol"
-    def host = @host || "127.0.0.1"
-    def port = @port || 4010
+    # Defaults come from the same DURABLE_AGENT_* variables the sidecar reads, so `DURABLE_AGENT_PORT=4020 bin/dev`
+    # moves both halves at once.
+    def model = @model || env("MODEL", "openai/gpt-6.1-sol")
+    def host = @host || env("HOST", "127.0.0.1")
+    def port = @port || env("PORT", 4010).to_i
     def url = @url || "http://#{host}:#{port}"
-    def rails_url = @rails_url || "http://127.0.0.1:3000"
+    def rails_url = @rails_url || env("RAILS_URL", "http://127.0.0.1:3000")
     def workspace_root = @workspace_root || Rails.root.join("storage/durable_agent").to_s
     def agent_name = @agent_name || Rails.application.class.module_parent_name
 
@@ -41,6 +43,10 @@ module DurableAgent
     end
 
     private
+      def env(name, default)
+        ENV["DURABLE_AGENT_#{name}"].presence || default
+      end
+
       def default_token
         Rails.application.credentials.dig(:durable_agent, :token).presence ||
           ENV["DURABLE_AGENT_TOKEN"].presence ||

@@ -11,6 +11,9 @@
 # It's strongly recommended that you check this file into your version control system.
 
 ActiveRecord::Schema[8.1].define(version: 2026_10_19_000000) do
+  # These are extensions that must be enabled in order to support this database
+  enable_extension "pg_catalog.plpgsql"
+
   create_table "durable_agent_conversations", id: :bigint, default: nil, force: :cascade do |t|
     t.bigint "owner_conversation_id"
     t.bigint "owner_task_id"
@@ -62,7 +65,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_19_000000) do
     t.bigint "commit_seq", null: false
     t.text "record", null: false
     t.index ["conversation_id", "id"], name: "durable_agent_entries_by_conversation", order: { id: :desc }
-    t.index ["conversation_id", "id"], name: "durable_agent_entry_heads_by_conversation", order: { id: :desc }, where: "head IS NOT NULL"
+    t.index ["conversation_id", "id"], name: "durable_agent_entry_heads_by_conversation", order: { id: :desc }, where: "(head IS NOT NULL)"
   end
 
   create_table "durable_agent_record_ids", id: :bigint, default: nil, force: :cascade do |t|
