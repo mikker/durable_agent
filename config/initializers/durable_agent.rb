@@ -5,7 +5,7 @@ DurableAgent.configure do |config|
   # config.model = "openai/gpt-6.1-sol"
 
   # Tools are DurableAgent::Tool subclasses. Give their names as strings so code reloading keeps working.
-  config.tools = %w[ CurrentTime ]
+  config.tools = %w[ CurrentTime SearchChats RenameChat ]
 
   # Where the sidecar listens, and where it reaches this app for tools and change events.
   # config.host = "127.0.0.1"

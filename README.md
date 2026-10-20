@@ -11,7 +11,12 @@ pi-durable sidecar, rendered by Rails with Phlex views and Nitro Kit 2 component
   broadcasts a Turbo refresh that morphs the page (`turbo_refreshes_with method: :morph, scroll: :preserve`).
 - The chats list orders by `conversation.last_activity_at` (the newest entry's `created_at`, else the
   conversation's).
-- `app/tools/current_time.rb` is an example Ruby tool, registered in `config/initializers/durable_agent.rb`.
+- `app/tools/` holds three example Ruby tools, registered in `config/initializers/durable_agent.rb`:
+  `CurrentTime` (read-only, replay-safe), `SearchChats` (reads this app's records: chats by title or message text)
+  and `RenameChat` (a side effect on the chat the model is answering in, found through
+  `DurableAgent::Current.conversation_id`; not replay-safe, so an interrupted call is reported, never repeated).
+  The sidecar fetches their definitions at boot and on `DurableAgent.client.reload_tools`; changing the list in
+  the initializer needs a restart of both processes.
 
 The gem is referenced by path, `gem "durable_agent", path: "../durable_agent"`, so this checkout expects
 `durable_agent` next to it.
