@@ -82,3 +82,13 @@ forked_notes:
   owner_id: 900004
   created_at: 9
   record: <%= json.({ id: 900505, kind: "app.notes", scope: { kind: "conversation", conversationId: 900004 }, history: "rewindable", fork: "copy", createdAt: 9 }) %>
+
+on_account_agent:
+  id: 900510
+  kind: <%= DurableAgent::IndexedString.encode("pi.agent").to_json %>
+  family: 0
+  key_value: <%= DurableAgent::IndexedString.encode("").to_json %>
+  scope_kind: conversation
+  owner_id: 900007
+  created_at: 1
+  record: <%= json.({ id: 900510, kind: "pi.agent", scope: { kind: "conversation", conversationId: 900007 }, history: "rewindable", fork: "copy", createdAt: 1 }) %>

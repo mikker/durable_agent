@@ -232,8 +232,13 @@ Rails encodes them with `DurableAgent::IndexedString` (`JSON.generate`), never `
   only the credential row differs. At boot every scoped provider id in `durable_agent_credentials` is registered;
   `POST /conversations` and the auth routes register on demand. pi-ai keys the credential store, `login`, `logout`
   and `checkAuth` by provider id, and a conversation pins its provider in `pi.agent`, so a conversation started on
-  `openai@u42` resolves that account's credential on every request, including after a restart. An account whose
-  credential is gone settles its runs `unanswered` with reason `no_model`.
+  `openai@u42` resolves that account's credential on every request, including after a restart. The clone's models
+  carry the scoped id, since pi-ai routes a request and its auth by `model.provider`; the clone hands each
+  request to the base provider with the base id again, because the request code switches on it (a Sign in with
+  ChatGPT token is recognised for `provider === "openai"` only), so assistant entries record `provider: "openai"`
+  while `pi.agent` keeps `openai@u42`. An account provider resolves its own stored credential only: the
+  environment (`OPENAI_API_KEY`) and credential files are the app's, never an account's. An account whose
+  credential is gone settles its runs `unanswered` with reason `model_error` ("Provider is not configured").
 - `reports.ts`: `createReporter(db, events)` stores Harness reports (faulted tasks, hook errors, a failed session)
   with `RETURNING id` and `CURRENT_TIMESTAMP`, then `events.report(id)`. pi-durable 1.3.0 calls `onReport(error)`
   with one argument; the `info` of newer releases is read when present. The reporter tracks its inserts in flight;
@@ -326,8 +331,12 @@ routes 404. The login routes with an `:id` answer 404 unless that login belongs 
 | DELETE | `/auth/:provider/logins/:id` | | `200 <login>` (cancelled) |
 | DELETE | `/auth/:provider?account=` | | `200 {ok: true}` (sign out) |
 
-`:provider` is the base provider id; `account` scopes it. `<login>.provider` carries the scoped id. Every account
-route answers `422 {error: "invalid_account"}` for an account outside `[A-Za-z0-9_.-]{1,64}`.
+`:provider` is the base provider id; `account` scopes it; the login routes with an `:id` also accept the scoped
+id. `<login>.provider` carries the scoped id. Every account route answers `422 {error: "invalid_account"}` for an
+account outside `[A-Za-z0-9_.-]{1,64}`, and `422 {error: "unknown_provider"}` for a base provider the sidecar
+cannot clone (`openai`, `anthropic` and `faux` it can). `PUT …/api_key` on a provider without API-key login
+(faux) is `422 {error: "no_api_key_auth"}`. `POST /conversations` also accepts an already scoped model ref
+(`{provider: "openai@u42", modelId}`) without `account`.
 | POST | `/tools/reload` | | `200 {tools: [names]}` re-fetches tool definitions from Rails |
 
 `<login>` = `{id, provider, status: "starting" | "awaiting_browser" | "exchanging" | "done" | "failed", url?, instructions?, deviceCode?: {userCode, verificationUri}, messages: [], error?}`.
@@ -413,20 +422,25 @@ conversation`); `on_report` to `report.conversation`, or to the stream `"durable
 has none (every report on pi-durable 1.3.0); `on_auth` to the stream `"durable_agent:auth"` and, for each account named, `"durable_agent:auth:<account>"`;
 a settings page subscribes with `turbo_stream_from DurableAgent.auth_stream(account)`.
 
+## Who pays
+
+Three arrangements. Each is a credential on an account plus a conversation started on that account; the app picks
+per conversation, and can mix them (a user with a credential runs on their account, the rest on the app's).
+
+- The app pays: one credential for everyone (`OPENAI_API_KEY`, a key stored with `connection.set_api_key`, or the
+  operator's Sign in with ChatGPT), conversations from `DurableAgent.start`. The operator's bill or plan carries
+  every user.
+- Each user pays with an API key: `Connection.new("openai", account: user.id).set_api_key(key)`, conversations
+  from `DurableAgent.start(account: user.id)`. Usage lands on the user's own provider bill. No browser flow.
+- Each user pays with their ChatGPT plan: `Connection.new("openai", account: user.id).start_login`, the user
+  approves in the browser, conversations from `DurableAgent.start(account: user.id)`. Usage is drawn from the plan,
+  under limits the user manages in ChatGPT settings; the app holds a refreshable token per user and never a key.
+
 ## Accounts
-
-Who pays for a conversation is a property of the account it runs on. Three arrangements, all through the same
-mechanism:
-
-| Arrangement | Credential | Conversation |
-|---|---|---|
-| The app pays, one API key or sign-in for everyone | the app's: `OPENAI_API_KEY` in the environment, `connection.set_api_key`, or Sign in with ChatGPT on the Settings page | `DurableAgent.start` |
-| Each user pays with an API key | `Connection.new("openai", account: user.id).set_api_key(key)` | `DurableAgent.start(account: user.id)` |
-| Each user pays with their ChatGPT plan | `Connection.new("openai", account: user.id).start_login`, then the user approves in the browser | `DurableAgent.start(account: user.id)` |
 
 The app decides which account a conversation runs on and what to do when an account has no credential:
 `DurableAgent.auth(account:)` says, and `start` without `account:` runs on the app's. A user's sign-out
-(`connection.disconnect`) leaves their running conversations settling `no_model` until they connect again. Usage
+(`connection.disconnect`) leaves their running conversations settling `model_error` until they connect again. Usage
 per account is the sum of `pi.usage` over that account's conversations, which the app relates to its users.
 
 Sign in with ChatGPT is pi-ai's OpenAI OAuth: a public client registered dynamically per login, scopes

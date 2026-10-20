@@ -30,7 +30,8 @@ mirror.
 
 ### The process
 
-Boot (`src/main.ts`): check the gem schema version, open the Harness, ensure the root conversation, start the HTTP
+Boot (`src/main.ts`): check the gem schema version, register a provider for every account with a stored
+credential (`openai@u42`, see `src/accounts.ts` and DESIGN.md "Accounts"), open the Harness, ensure the root conversation, start the HTTP
 server, load the tool definitions from Rails (retrying for up to 60 s while Puma starts; with no Rails URL or after
 the retry gives up it runs with none), log `resuming with N tools`, then resume interrupted runs. Tools come first
 because pi-durable re-runs an interrupted `replay: "safe"` call only when the tool is registered at that moment.
@@ -50,7 +51,7 @@ inserts in flight, close the Harness, flush change events, exit 0. After 30 s it
 signal exits 1 at once.
 
 Change events posted to `/durable_agent/events` carry `conversations`, `reports` and, when a sign-in completed or a
-provider was signed out, `auth: [providers]`.
+provider was signed out, `auth: [providers]`, scoped when an account's (`openai@u42`).
 
 ## Database
 

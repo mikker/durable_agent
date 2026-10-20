@@ -1,6 +1,7 @@
 require "durable_agent/version"
 require "durable_agent/engine"
 require "durable_agent/configuration"
+require "durable_agent/account"
 require "durable_agent/client"
 require "durable_agent/current"
 require "durable_agent/message_text"
@@ -25,10 +26,11 @@ module DurableAgent
     # Creates a conversation on the sidecar and returns its row, which the sidecar commits before it answers.
     # Without a model the sidecar uses its default, which `durable_agent:sidecar` sets from config.model.
     #
-    # The sidecar commits in its own transaction, so this cannot join the caller's: when the app's own record
-    # fails to save afterwards, the conversation stays behind, unreferenced.
-    def start(model: nil, instructions: nil)
-      response = client.create_conversation(model: model, instructions: instructions)
+    # With an account the conversation runs on that account's provider credentials (see Connection), without one
+    # on the app's. The sidecar commits in its own transaction, so this cannot join the caller's: when the app's own
+    # record fails to save afterwards, the conversation stays behind, unreferenced.
+    def start(model: nil, instructions: nil, account: nil)
+      response = client.create_conversation(model: model, instructions: instructions, **account_scope(account))
       changed_by_sidecar
       conversation(response.fetch("id"))
     end
@@ -39,15 +41,28 @@ module DurableAgent
 
     # Every provider the sidecar knows, signed in or not, with how: {"openai" => {"type" => "oauth", "source" =>
     # "OAuth"}, "anthropic" => {"type" => "api_key", "source" => "ANTHROPIC_API_KEY"}, "google" => nil, ...}.
-    # Includes "faux" when the sidecar's model is faux/faux-1.
-    def auth
-      client.auth
+    # Includes "faux" when the sidecar's model is faux/faux-1. With an account, that account's providers, under
+    # their base names.
+    def auth(account: nil)
+      client.auth(**account_scope(account))
+    end
+
+    # The stream config.on_auth refreshes when the app's sign-ins change, or the account's:
+    # `turbo_stream_from DurableAgent.auth_stream(account)`.
+    def auth_stream(account = nil)
+      [ "durable_agent:auth", Account.normalize(account) ].compact.join(":")
     end
 
     # The sidecar just committed rows this thread may already have read: drop the query cache so the next read in
     # the same request sees them.
     def changed_by_sidecar
       DurableAgent::ApplicationRecord.connection_pool.clear_query_cache
+    end
+
+    # The keyword arguments that scope a client call to an account: none for the app's own, so its calls stay as
+    # they were.
+    def account_scope(account)
+      { account: Account.normalize(account) }.compact
     end
   end
 end

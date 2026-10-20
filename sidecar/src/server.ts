@@ -2,7 +2,7 @@
 // pi-durable's tables in the shared database, never from here. Anything not listed below is a 404.
 import { timingSafeEqual } from "node:crypto";
 import type { Context as PiContext } from "@earendil-works/chord/context";
-import type { Models } from "@earendil-works/pi-ai";
+import type { MutableModels } from "@earendil-works/pi-ai";
 import {
 	ConversationBusy,
 	type ConversationId,
@@ -13,6 +13,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
+import { ensureAccountProvider, isValidAccount, parseProviderId, scopedProviderId, UnknownBaseProvider } from "./accounts.ts";
 import type { Logins } from "./auth.ts";
 import { parseModel } from "./config.ts";
 import type { Db } from "./db/index.ts";
@@ -26,7 +27,8 @@ export type Readiness = { readonly resumed: boolean };
 export type ServerDeps = {
 	readonly harness: Harness;
 	readonly readiness: Readiness;
-	readonly models: Models;
+	/** Account providers are registered here on demand. */
+	readonly models: MutableModels;
 	readonly db: Db;
 	readonly logins: Logins;
 	readonly tools: RailsTools;
@@ -65,6 +67,15 @@ const modelRef = (value: unknown): ModelRef | undefined => {
 	throw badRequest("model must be {provider, modelId}");
 };
 
+const unprocessable = (error: string): HTTPException => new HTTPException(422, { message: error });
+
+/** `undefined` for the app's own account; anything outside ACCOUNT_PATTERN is `422 invalid_account`. */
+const accountOf = (value: unknown): string | undefined => {
+	if (value === undefined || value === null) return undefined;
+	if (!isValidAccount(value)) throw unprocessable("invalid_account");
+	return value;
+};
+
 const sameSecret = (given: string | undefined, expected: string): boolean => {
 	const a = Buffer.from(given ?? "");
 	const b = Buffer.from(expected);
@@ -89,9 +100,19 @@ export function createServer({ harness, readiness, models, db, logins, tools, to
 	app.onError((error, c) => {
 		if (error instanceof HTTPException) return c.json({ error: error.message }, error.status);
 		if (error instanceof ConversationBusy) return c.json({ error: "conversation_busy" }, 409);
+		if (error instanceof UnknownBaseProvider) return c.json({ error: "unknown_provider" }, 422);
 		if (error instanceof UnknownModel) return c.json({ error: error.message, suggestions: error.suggestions }, 422);
 		return c.json({ error: error instanceof Error ? error.message : String(error) }, 500);
 	});
+
+	/** The account's provider for `base`, registered on demand; `UnknownBaseProvider` (422) when it cannot be. */
+	const providerFor = (base: string, account: string): string => ensureAccountProvider(models, base, account);
+
+	/** The provider id an auth route acts on: `:provider`, or with `?account=` that account's. */
+	const authProvider = (provider: string, rawAccount: string | undefined): string => {
+		const account = accountOf(rawAccount);
+		return account === undefined ? provider : providerFor(provider, account);
+	};
 
 	// Submitting or aborting starts pi-durable's scheduler, which would settle an interrupted tool call before the tool
 	// definitions are back from Rails. Boot resumes once they are.
@@ -124,7 +145,13 @@ export function createServer({ harness, readiness, models, db, logins, tools, to
 
 	app.post("/conversations", async (c) => {
 		const input = await body(c.req.raw);
-		const model = modelRef(input.model) ?? defaultModel;
+		const account = accountOf(input.account);
+		const given = modelRef(input.model) ?? defaultModel;
+		// With an account the conversation pins that account's provider (`openai@u42`), so every request it makes
+		// resolves the account's credential, after a restart too.
+		const named = parseProviderId(given.provider);
+		const scope = account ?? (isValidAccount(named.account) ? named.account : undefined);
+		const model = scope === undefined ? given : { ...given, provider: providerFor(named.provider, scope) };
 		assertKnownModel(models, model);
 		if (input.instructions !== undefined && input.instructions !== null && typeof input.instructions !== "string") {
 			throw badRequest("instructions must be a string");
@@ -175,16 +202,50 @@ export function createServer({ harness, readiness, models, db, logins, tools, to
 	// flow also listens on 127.0.0.1:1455 for the browser redirect, which completes the login by itself when the
 	// browser runs on this host (development). Otherwise the user pastes the final redirect URL and Rails posts it.
 
-	app.get("/auth", async (c) => c.json(await logins.status()));
+	// `:provider` is the base provider id; `?account=` scopes it to that account's provider (`openai@u42`).
+
+	app.get("/auth", async (c) => {
+		const account = accountOf(c.req.query("account"));
+		if (account === undefined) {
+			// The app's own providers; account providers are reported only per account.
+			const status = await logins.status();
+			return c.json(Object.fromEntries(Object.entries(status).filter(([id]) => parseProviderId(id).account === undefined)));
+		}
+		const result: Record<string, { type: "api_key" | "oauth"; source?: string } | null> = {};
+		for (const provider of models.getProviders()) {
+			if (parseProviderId(provider.id).account !== undefined) continue;
+			const scoped = scopedProviderId(provider.id, account);
+			// Boot registers every account provider with a stored credential, and storing one registers it: an
+			// unregistered one has none.
+			const check = models.getProvider(scoped) === undefined ? undefined : await models.checkAuth(scoped).catch(() => undefined);
+			result[provider.id] = check === undefined ? null : { type: check.type, source: check.source };
+		}
+		return c.json(result);
+	});
+
+	app.put("/auth/:provider/api_key", async (c) => {
+		const provider = authProvider(c.req.param("provider"), c.req.query("account"));
+		const input = await body(c.req.raw);
+		if (typeof input.key !== "string" || input.key.trim() === "") throw unprocessable("blank_key");
+		const registered = models.getProvider(provider);
+		if (registered === undefined) throw unprocessable("unknown_provider");
+		if (registered.auth.apiKey?.login === undefined) throw unprocessable("no_api_key_auth");
+		await logins.storeApiKey(provider, input.key);
+		const check = await models.checkAuth(provider);
+		return c.json(check === undefined ? null : { type: check.type, source: check.source });
+	});
 
 	app.post("/auth/:provider/logins", async (c) => {
-		const login = await logins.start(c.req.param("provider"));
+		const login = await logins.start(authProvider(c.req.param("provider"), c.req.query("account")));
 		return c.json(login, login.status === "failed" ? 422 : 201);
 	});
 
-	/** The login named by `:id`, which must belong to `:provider`. */
+	/** The login named by `:id`, which must belong to `:provider`: the base id of its (maybe scoped) provider. */
 	const login = (provider: string, id: string): string => {
-		if (logins.get(id)?.provider !== provider) throw new HTTPException(404, { message: "login not found" });
+		const owner = logins.get(id)?.provider;
+		if (owner === undefined || (owner !== provider && parseProviderId(owner).provider !== provider)) {
+			throw new HTTPException(404, { message: "login not found" });
+		}
 		return id;
 	};
 
@@ -200,7 +261,7 @@ export function createServer({ harness, readiness, models, db, logins, tools, to
 	app.delete("/auth/:provider/logins/:id", (c) => c.json(logins.cancel(login(c.req.param("provider"), c.req.param("id")))));
 
 	app.delete("/auth/:provider", async (c) => {
-		await logins.logout(c.req.param("provider"));
+		await logins.logout(authProvider(c.req.param("provider"), c.req.query("account")));
 		return c.json({ ok: true });
 	});
 

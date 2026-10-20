@@ -88,6 +88,26 @@ class DurableAgent::EventsControllerTest < ActionDispatch::IntegrationTest
     assert_equal [ "refresh" ], streams.map { it["action"] }
   end
 
+  test "auth ids arrive scoped as given" do
+    post_events auth: [ "openai@u42", "openai" ]
+    assert_equal [ %w[ openai@u42 openai ] ], @signed_in
+  end
+
+  test "the default on_auth also broadcasts to each account's stream" do
+    @config.on_auth = nil
+
+    app, u42, u7 = nil
+    u7 = capture_turbo_stream_broadcasts("durable_agent:auth:u7") do
+      u42 = capture_turbo_stream_broadcasts("durable_agent:auth:u42") do
+        app = capture_turbo_stream_broadcasts("durable_agent:auth") { post_events auth: [ "openai@u42", "anthropic@u42", "openai@u7" ] }
+      end
+    end
+
+    assert_equal [ "refresh" ], app.map { it["action"] }
+    assert_equal [ "refresh" ], u42.map { it["action"] }
+    assert_equal [ "refresh" ], u7.map { it["action"] }
+  end
+
   test "the default on_report broadcasts a report without a conversation to durable_agent:reports" do
     @config.on_report = nil
 

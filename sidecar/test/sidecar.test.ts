@@ -5,6 +5,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { test } from "node:test";
+import { DbCredentialStore } from "../src/credentials.ts";
 import type { Db } from "../src/db/index.ts";
 import { openDatabase } from "../src/db/index.ts";
 import { ensurePostgresDatabase, openTestDatabase, TEST_DATABASE_URL, TEST_DIALECT, tempDir, testDatabaseUrl, until } from "./helpers.ts";
@@ -136,6 +137,28 @@ test(`[${TEST_DIALECT}] the server answers while tools load, and the Harness res
 	} finally {
 		sidecar.child.kill("SIGKILL");
 		await rails.close();
+		await db.close();
+	}
+});
+
+test(`[${TEST_DIALECT}] an account's stored credential registers its provider at boot`, async () => {
+	const { url, db } = await database();
+	await new DbCredentialStore(db, TOKEN).modify("openai@u42", async () => ({ type: "api_key", key: "sk-test-u42" }));
+	const sidecar = start(url);
+	try {
+		const base = await sidecar.url();
+		await sidecar.line(/^resuming with 0 tools$/);
+		const response = await fetch(`${base}/auth?account=u42`, { headers: { authorization: `Bearer ${TOKEN}` } });
+		assert.equal(response.status, 200);
+		const status = (await response.json()) as Record<string, unknown>;
+		assert.deepEqual(status.openai, { type: "api_key", source: "stored credential" });
+		assert.equal(status.anthropic, null);
+		const app = (await (await fetch(`${base}/auth`, { headers: { authorization: `Bearer ${TOKEN}` } })).json()) as Record<string, unknown>;
+		assert.ok(Object.keys(app).every((id) => !id.includes("@")), Object.keys(app).join(", "));
+		sidecar.child.kill("SIGTERM");
+		assert.equal(await sidecar.exited, 0);
+	} finally {
+		sidecar.child.kill("SIGKILL");
 		await db.close();
 	}
 });

@@ -2,6 +2,7 @@ import type { Server } from "node:http";
 import { serve } from "@hono/node-server";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { registerBunOAuthFlows } from "@earendil-works/pi-ai/bun-oauth";
+import { registerStoredAccounts } from "./accounts.ts";
 import { Logins } from "./auth.ts";
 import { loadConfig } from "./config.ts";
 import { DbCredentialStore } from "./credentials.ts";
@@ -84,7 +85,10 @@ async function boot(db: Db) {
 		await checkSchemaVersion(db);
 		// Provider credentials (API keys, Sign in with ChatGPT tokens) live in the app's database, encrypted under a key
 		// derived from the shared token, and survive redeploys.
-		const models = createProcessModels(config, new DbCredentialStore(db, config.token));
+		const credentials = new DbCredentialStore(db, config.token);
+		const models = createProcessModels(config, credentials);
+		// Every account that has signed in has a provider of its own (`openai@u42`); its conversations pin it.
+		await registerStoredAccounts(models, credentials);
 		const deviceId = await installationDeviceId(db);
 		const events = new Events({ railsUrl: config.railsUrl, token: config.token });
 		const logins = new Logins(models, () => deviceId, config.agentName, (provider) => events.auth(provider));

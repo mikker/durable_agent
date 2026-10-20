@@ -49,10 +49,15 @@ module DurableAgent
       @on_report || ->(report) { Turbo::StreamsChannel.broadcast_refresh_to(report.conversation || "durable_agent:reports") }
     end
 
-    # Called with the provider ids when a sign-in completes or a provider signs out. The default refreshes the
-    # pages subscribed with `turbo_stream_from "durable_agent:auth"`, such as a settings page.
+    # Called with the provider ids when a sign-in completes or a provider signs out, scoped for accounts
+    # ("openai", "openai@u42"). The default refreshes the pages subscribed with `turbo_stream_from
+    # DurableAgent.auth_stream`, such as a settings page, and with `turbo_stream_from
+    # DurableAgent.auth_stream(account)` for each account named.
     def on_auth
-      @on_auth || ->(providers) { Turbo::StreamsChannel.broadcast_refresh_to("durable_agent:auth") }
+      @on_auth || ->(providers) do
+        accounts = providers.filter_map { |provider| DurableAgent::Account.parse(provider).second }.uniq
+        [ nil, *accounts ].each { |account| Turbo::StreamsChannel.broadcast_refresh_to(DurableAgent.auth_stream(account)) }
+      end
     end
 
     private

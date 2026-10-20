@@ -36,3 +36,9 @@ owned:
   owner_conversation_id: 900002
   owner_task_id: 900601
   record: <%= json.({ id: 900005, owner: { conversationId: 900002, taskId: 900601 } }) %>
+
+# Started with DurableAgent.start(account: "u42"): its model runs on account u42's OpenAI credential.
+on_account:
+  id: 900007
+  record: <%= json.({ id: 900007 }) %>
+  created_at: <%= 1.day.ago.to_fs(:db) %>

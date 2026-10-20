@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Accounts: `DurableAgent.start(account:)` runs a conversation on an account's own provider credentials (a user's
+  API key or ChatGPT plan) instead of the app's. `Connection.new(provider, account:)` signs an account in, with
+  `set_api_key`, `api_key?`, `source`, `scoped_provider` and `stream_name`; `DurableAgent.auth(account:)` and
+  `DurableAgent.auth_stream(account)` read and follow it; `Conversation#provider` and `#account` read the pinned
+  model (`"openai@u42/gpt-6.1-sol"`). `config.on_auth` receives scoped provider ids, and its default also
+  refreshes `"durable_agent:auth:<account>"` for each account named. `DurableAgent::Account` validates account
+  names. On the sidecar an account is a clone of the base provider under `openai@u42`, registered on demand and
+  at boot from the credentials table; it resolves only its own stored credential, never the environment. New
+  routes: `PUT /auth/:provider/api_key?account=`, `?account=` on `GET /auth`, logins and sign-out, `account` on
+  `POST /conversations`.
 - First release: pi-durable as a bundled sidecar over the app's own database (Postgres or SQLite), read-only
   Active Record models, Ruby tools, Turbo refreshes on change, sign-in and auth events, and
   `DurableAgent::TestHelper` for apps' tests.

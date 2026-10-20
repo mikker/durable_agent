@@ -71,3 +71,10 @@ forked_notes_delta:
   kind: delta
   version: 2
   content: <%= json.([ { op: "set", path: [ "text" ], value: "final" } ]) %>
+
+on_account_agent_base:
+  document_id: 900510
+  seq: 2
+  kind: base
+  version: 1
+  content: <%= json.({ model: { provider: "openai@u42", modelId: "gpt-6.1-sol" } }) %>

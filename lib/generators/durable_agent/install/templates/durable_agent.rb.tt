@@ -23,6 +23,8 @@ DurableAgent.configure do |config|
   # "durable_agent:reports"`; sign-ins and sign-outs refresh `turbo_stream_from "durable_agent:auth"`.
   # config.on_change = ->(conversation) { Turbo::StreamsChannel.broadcast_refresh_to(conversation) }
   # config.on_report = ->(report) { Rails.logger.warn(report.message) }
+  # on_auth gets provider ids, scoped for accounts ("openai", "openai@u42"); its default also refreshes
+  # `turbo_stream_from DurableAgent.auth_stream(account)` for each account named.
   # config.on_auth = ->(providers) { Turbo::StreamsChannel.broadcast_refresh_to("durable_agent:auth") }
 end
 

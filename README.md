@@ -106,8 +106,9 @@ Sign-ins (including OAuth refresh tokens) are stored in your app's database, in
 `durable_agent_credentials`, encrypted by the sidecar with AES-256-GCM under a key derived from the shared
 `DURABLE_AGENT_TOKEN`. Database dumps, replicas and read-only database users see ciphertext. Rails has no model for
 the table and never decrypts it. This is not a vault: the sidecar process holds the key, and anyone with both the
-database and the token can decrypt. API keys work through `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`, read from the environment rather
-than this table; subscriptions sign in with OAuth:
+database and the token can decrypt. API keys work through `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`, read from the
+environment, or through `connection.set_api_key`, which stores them in the same table; subscriptions sign in with
+OAuth:
 
 ```ruby
 DurableAgent.auth
@@ -135,6 +136,40 @@ default refreshes pages subscribed to `"durable_agent:auth"`, so a settings page
 ```erb
 <%= turbo_stream_from "durable_agent:auth" %>
 ```
+
+### Accounts
+
+Who pays for a conversation is the account it runs on. An account is a string you choose, typically a user id
+(`[A-Za-z0-9_.-]{1,64}`); without one, a conversation runs on the app's own credentials.
+
+| Who pays | Credential | Conversation |
+|---|---|---|
+| The app, one API key or sign-in for everyone | `OPENAI_API_KEY`, `Connection.new("openai").set_api_key(key)`, or Sign in with ChatGPT | `DurableAgent.start` |
+| Each user, with an API key | `Connection.new("openai", account: user.id).set_api_key(key)` | `DurableAgent.start(account: user.id)` |
+| Each user, with their ChatGPT plan | `Connection.new("openai", account: user.id).start_login`, then the user approves in the browser | `DurableAgent.start(account: user.id)` |
+
+```ruby
+DurableAgent.auth(account: user.id)            # that account's providers, under their base names
+connection = DurableAgent::Connection.new("openai", account: user.id)
+connection.set_api_key(params[:key])           # => {"type" => "api_key", "source" => "stored credential"}
+connection.api_key? / connection.source / connection.scoped_provider   # => true, "stored credential", "openai@42"
+connection.disconnect                          # their running conversations settle model_error until they connect again
+
+conversation = DurableAgent.start(account: user.id)
+conversation.model                             # => "openai@42/gpt-6.1-sol"
+conversation.provider / conversation.account   # => "openai", "42"
+```
+
+Your app decides which account a conversation runs on and what to do when that account has no credential;
+`DurableAgent.auth(account:)` says which providers it has. `config.on_auth` receives scoped provider ids
+(`"openai@42"`), and its default also refreshes each named account's stream, which a user's settings page
+subscribes to:
+
+```erb
+<%= turbo_stream_from DurableAgent.auth_stream(Current.user.id) %>
+```
+
+Usage per account is the sum of `conversation.usage` over that account's conversations.
 
 ## Tools
 

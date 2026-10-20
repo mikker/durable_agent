@@ -51,6 +51,11 @@ class DurableAgent::Conversation < DurableAgent::ApplicationRecord
     "#{ref["provider"]}/#{ref["modelId"]}" if ref
   end
 
+  # "openai" and "u42" from the model "openai@u42/gpt-6.1-sol"; account is nil for a conversation on the app's
+  # own credentials.
+  def provider = scoped_provider.first
+  def account = scoped_provider.second
+
   def busy?
     live["run"].present?
   end
@@ -94,4 +99,9 @@ class DurableAgent::Conversation < DurableAgent::ApplicationRecord
   def abort
     DurableAgent.client.abort(id).tap { DurableAgent.changed_by_sidecar }
   end
+
+  private
+    def scoped_provider
+      model ? DurableAgent::Account.parse(model.split("/", 2).first) : []
+    end
 end

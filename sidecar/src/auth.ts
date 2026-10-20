@@ -43,7 +43,7 @@ export class Logins {
 		this.#changed = changed;
 	}
 
-	/** Every provider's connection state: `undefined` when no credentials are configured. */
+	/** Every provider's connection state, account providers (`openai@u42`) included: `null` without credentials. */
 	async status(): Promise<Record<string, { type: "api_key" | "oauth"; source?: string } | null>> {
 		const result: Record<string, { type: "api_key" | "oauth"; source?: string } | null> = {};
 		for (const provider of this.#models.getProviders()) {
@@ -146,6 +146,18 @@ export class Logins {
 		if (pending === undefined) return undefined;
 		pending.abort.abort(new Error("login cancelled"));
 		return pending.login;
+	}
+
+	/**
+	 * Store an API key for `provider` through its own API-key login, which answers its one secret prompt with `key`.
+	 * The caller has checked that the provider has API-key auth with a login.
+	 */
+	async storeApiKey(provider: string, key: string): Promise<void> {
+		const prompt = (request: AuthPrompt): Promise<string> =>
+			request.type === "secret" ? Promise.resolve(key) : Promise.reject(new Error(`API-key login asked for a ${request.type} prompt`));
+		await this.#models.login(provider, "api_key", { signal: new AbortController().signal, notify: () => {}, prompt });
+		log.info("provider API key stored", { provider });
+		this.#changed(provider);
 	}
 
 	async logout(provider: string): Promise<void> {

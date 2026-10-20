@@ -39,6 +39,20 @@ class DurableAgent::ConversationTest < ActiveSupport::TestCase
     assert_nil durable_agent_conversations(:idle).model, "no pi.agent document yet"
   end
 
+  test "provider and account come from the pinned model" do
+    on_account = durable_agent_conversations(:on_account)
+    assert_equal "openai@u42/gpt-6.1-sol", on_account.model
+    assert_equal "openai", on_account.provider
+    assert_equal "u42", on_account.account
+
+    errored = durable_agent_conversations(:errored)
+    assert_equal "openai", errored.provider
+    assert_nil errored.account
+
+    assert_nil durable_agent_conversations(:idle).provider
+    assert_nil durable_agent_conversations(:idle).account
+  end
+
   test "documents are the conversation's current ones" do
     idle = durable_agent_conversations(:idle)
 
@@ -166,6 +180,16 @@ class DurableAgent::ConversationTest < ActiveSupport::TestCase
     stub_sidecar(create_conversation: { "id" => 900002 })
     DurableAgent.start
     assert_equal({ model: nil, instructions: nil }, sidecar_calls(:create_conversation).sole.last)
+  end
+
+  test "start runs on an account, normalized" do
+    stub_sidecar(create_conversation: { "id" => 900007 })
+
+    assert_equal durable_agent_conversations(:on_account), DurableAgent.start(account: 42)
+    assert_equal({ model: nil, instructions: nil, account: "42" }, sidecar_calls(:create_conversation).sole.last)
+
+    assert_raises(ArgumentError) { DurableAgent.start(account: "u@42") }
+    assert_equal 1, sidecar_calls(:create_conversation).size
   end
 
   test "conversation finds by id" do

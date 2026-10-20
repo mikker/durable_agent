@@ -100,6 +100,40 @@ class DurableAgent::ClientTest < ActiveSupport::TestCase
     end
   end
 
+  test "account routes carry the account" do
+    routes = {
+      "POST /conversations" => [ 201, { id: 8 } ],
+      "GET /auth?account=u42" => [ 200, { openai: { type: "api_key", source: "stored credential" }, anthropic: nil } ],
+      "PUT /auth/openai/api_key?account=u42" => [ 200, { type: "api_key", source: "stored credential" } ],
+      "PUT /auth/openai/api_key" => [ 200, { type: "api_key", source: "stored credential" } ],
+      "POST /auth/openai/logins?account=u42" => [ 201, { id: "l2", provider: "openai@u42", status: "awaiting_browser" } ],
+      "DELETE /auth/openai?account=u42" => [ 200, { ok: true } ]
+    }
+
+    FakeSidecar.serve(routes) do |sidecar|
+      client = client(sidecar)
+      assert_equal({ "id" => 8 }, client.create_conversation(model: "openai/gpt-6.1-sol", account: "u42"))
+      assert_equal "api_key", client.auth(account: "u42")["openai"]["type"]
+      assert_equal "stored credential", client.set_api_key("openai", "sk-1", account: "u42")["source"]
+      assert_equal "api_key", client.set_api_key("openai", "sk-2")["type"]
+      assert_equal "openai@u42", client.start_login("openai", account: "u42")["provider"]
+      assert_equal({ "ok" => true }, client.logout("openai", account: "u42"))
+
+      create, _, scoped_key, app_key = sidecar.requests
+      assert_equal({ "model" => { "provider" => "openai", "modelId" => "gpt-6.1-sol" }, "account" => "u42" }, create[:body])
+      assert_equal({ "key" => "sk-1" }, scoped_key[:body])
+      assert_equal [ "PUT", { "key" => "sk-2" } ], app_key.values_at(:method, :body)
+    end
+  end
+
+  test "an invalid account is an ArgumentError" do
+    FakeSidecar.serve("GET /auth?account=u%4042" => [ 422, { error: "invalid_account" } ],
+      "POST /conversations" => [ 422, { error: "invalid_account" } ]) do |sidecar|
+      assert_raises(ArgumentError, match: "invalid account") { client(sidecar).auth(account: "u@42") }
+      assert_raises(ArgumentError, match: "invalid account") { client(sidecar).create_conversation(account: "u@42") }
+    end
+  end
+
   private
     def client(sidecar) = DurableAgent::Client.new(url: sidecar.url, token: "secret")
 end

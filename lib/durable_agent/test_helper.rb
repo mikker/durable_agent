@@ -74,7 +74,7 @@ module DurableAgent
     end
 
     private
-      def fake_create_conversation(model: nil, instructions: nil)
+      def fake_create_conversation(model: nil, instructions: nil, account: nil)
         id = next_fake_sidecar_id
         DurableAgent::Conversation.insert({ id: id, record: { id: id } })
         { "id" => id }

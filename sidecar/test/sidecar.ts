@@ -1,6 +1,7 @@
 // A sidecar wired as main.ts wires it, over the test database, without the HTTP listener: open, root, tools, resume.
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { MutableModels } from "@earendil-works/pi-ai";
+import { registerStoredAccounts } from "../src/accounts.ts";
 import type { Config } from "../src/config.ts";
 import { DbCredentialStore } from "../src/credentials.ts";
 import type { Db } from "../src/db/index.ts";
@@ -39,7 +40,9 @@ export async function bootTestSidecar(options: TestSidecarOptions = {}): Promise
 	});
 	const config = await testConfig(options.config);
 	await checkSchemaVersion(db);
-	const models = options.models?.(db) ?? createProcessModels(config, new DbCredentialStore(db, config.token));
+	const credentials = new DbCredentialStore(db, config.token);
+	const models = options.models?.(db) ?? createProcessModels(config, credentials);
+	await registerStoredAccounts(models, credentials);
 	const events = new Events({
 		railsUrl: config.railsUrl,
 		token: config.token,

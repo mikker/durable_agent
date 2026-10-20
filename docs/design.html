@@ -479,8 +479,14 @@ turbo_stream_from conversation            <span class="hl-c"># refresh broadcast
   </section>
 
   <section>
-    <h2>Accounts</h2>
-    <p class="prose">An account names whose credential a conversation runs on. It is an app-chosen string, typically a user id. The sidecar carries it in the provider id: <code>openai@u42</code> is account <code>u42</code>'s OpenAI, <code>openai@u42/gpt-6.1-sol</code> its model ref, and no <code>@</code> is the app's own. pi-ai keys credentials, logins and auth checks by provider id, and each conversation pins its provider in <code>pi.agent</code>, so one mechanism covers who pays:</p>
+    <h2>Who pays</h2>
+    <p class="prose">Three arrangements. Each is a credential on an account and a conversation started on that account; the app picks per conversation.</p>
+    <h3>The app pays</h3>
+    <p class="prose">One credential for everyone: <code>OPENAI_API_KEY</code> in the environment, a key stored with <code>connection.set_api_key</code>, or the operator's Sign in with ChatGPT on the Settings page. Conversations start with <code>DurableAgent.start</code>. The operator's bill or plan carries every user. Right for an app with one operator, or one that bills its users itself.</p>
+    <h3>Each user pays with an API key</h3>
+    <p class="prose">The user pastes their own key; the app stores it with <code>Connection.new("openai", account: user.id).set_api_key(key)</code> and starts their conversations with <code>DurableAgent.start(account: user.id)</code>. Usage lands on the user's OpenAI or Anthropic bill. No browser flow, no provider program.</p>
+    <h3>Each user pays with their ChatGPT plan</h3>
+    <p class="prose">The user signs in with ChatGPT through <code>Connection.new("openai", account: user.id).start_login</code>, approves the app in the browser, and their conversations run on the usage included in their plan, with limits they manage in ChatGPT settings. The app holds a refreshable token per user and never sees a key.</p>
     <div class="table-wrap">
       <table>
         <thead><tr><th>Who pays</th><th>Credential</th><th>Conversation</th></tr></thead>
@@ -491,7 +497,13 @@ turbo_stream_from conversation            <span class="hl-c"># refresh broadcast
         </tbody>
       </table>
     </div>
-    <p class="prose">The sidecar registers a clone of the base provider under the scoped id on demand and at boot from the credentials table: same catalog, same auth methods, one more credential row. A conversation on an account whose credential is gone settles <code>no_model</code>. Usage per account is the sum of <code>pi.usage</code> over its conversations.</p>
+    <p class="prose">An app can mix them: a user with a credential runs on their account, the rest on the app's. <code>DurableAgent.auth(account:)</code> says which a user has.</p>
+  </section>
+
+  <section>
+    <h2>Accounts</h2>
+    <p class="prose">An account names whose credential a conversation runs on. It is an app-chosen string, typically a user id. The sidecar carries it in the provider id: <code>openai@u42</code> is account <code>u42</code>'s OpenAI, <code>openai@u42/gpt-6.1-sol</code> its model ref, and no <code>@</code> is the app's own. pi-ai keys credentials, logins and auth checks by provider id, and each conversation pins its provider in <code>pi.agent</code>, so the three arrangements above share one mechanism.</p>
+    <p class="prose">The sidecar registers a clone of the base provider under the scoped id on demand and at boot from the credentials table: same catalog, same auth methods, one more credential row. The clone's models carry the scoped id, so pi-ai resolves the account's credential; each request goes to the base provider under its own id, so assistant entries record <code>openai</code> while <code>pi.agent</code> keeps <code>openai@u42</code>. An account never falls back to the app's <code>OPENAI_API_KEY</code>. A conversation on an account whose credential is gone settles <code>model_error</code>. Usage per account is the sum of <code>pi.usage</code> over its conversations.</p>
     <p class="prose">Sign in with ChatGPT is pi-ai's OpenAI OAuth: a public client registered per login, scope <code>chatgpt.tokens.use.direct</code>, the token sent to the Responses API, usage drawn from the signed-in user's plan. The redirect is <code>127.0.0.1:1455</code>: on the sidecar's host the listener completes the login; elsewhere the user pastes the final URL into the app.</p>
   </section>
 
@@ -655,13 +667,13 @@ connection.set_api_key(key) / start_login / complete_login(id, url) / disconnect
   <section>
     <h2>Status</h2>
     <ol class="steps">
-      <li><strong>Storage over the app's database, both adapters, both wrappers.</strong><span>Done. 113 node:test cases on SQLite, 112 on Postgres, 24 of them pi-durable's conformance cases.</span></li>
-      <li><strong>Ruby engine.</strong><span>Done. 144 Minitest runs per adapter, including a full schema comparison.</span></li>
+      <li><strong>Storage over the app's database, both adapters, both wrappers.</strong><span>Done. 127 node:test cases on SQLite, 126 on Postgres, 24 of them pi-durable's conformance cases.</span></li>
+      <li><strong>Ruby engine.</strong><span>Done. 161 Minitest runs per adapter, including a full schema comparison.</span></li>
       <li><strong>Round trip on each adapter.</strong><span>Done. The real sidecar on <code>faux/faux-1</code> against the test database.</span></li>
       <li><strong>Installer, rake task, bundle.</strong><span>Done.</span></li>
       <li><strong>Resilience under real failures.</strong><span>Done. Backend terminated inside a transaction, SQLite lock held from another process, storage failure exiting 1, restart during a replay-safe tool call, failing reads around a commit.</span></li>
       <li><strong>A real app on the gem.</strong><span>Done. A Nitro Kit chat app on SQLite: tools, answers, events, sign-in.</span></li>
-      <li class="open"><strong>Accounts: scoped credentials, API keys, Sign in with ChatGPT per account.</strong><span>In progress.</span></li>
+      <li><strong>Accounts: scoped credentials, API keys, Sign in with ChatGPT per account.</strong><span>Done. Verified live against the HTTP API: an account's key reaches OpenAI (a 401 naming it), faux answers on an account, a per-account sign-in starts as <code>openai@u42</code>, a stored account credential survives a restart.</span></li>
       <li class="open"><strong>A real-provider run with a tool call.</strong><span>Open. Needs a live sign-in.</span></li>
     </ol>
     <h3>Known limitations</h3>

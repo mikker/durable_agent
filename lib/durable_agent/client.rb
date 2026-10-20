@@ -36,9 +36,10 @@ module DurableAgent
 
     def health = get("/health")
 
-    # `model` is "provider/modelId" or {provider:, modelId:}.
-    def create_conversation(model: nil, instructions: nil)
-      post("/conversations", { model: model_payload(model), instructions: instructions }.compact)
+    # `model` is "provider/modelId" or {provider:, modelId:}. With `account` the conversation runs on that account's
+    # credentials: its model's provider becomes "provider@account".
+    def create_conversation(model: nil, instructions: nil, account: nil)
+      post("/conversations", { model: model_payload(model), instructions: instructions, account: account&.to_s }.compact)
     rescue Error => error
       raise UnknownModel.new(error.status, error.body) if error.status == 422
       raise
@@ -51,12 +52,15 @@ module DurableAgent
 
     def abort(conversation_id) = post("/conversations/#{conversation_id}/abort")
 
-    def auth = get("/auth")
-    def start_login(provider) = post("/auth/#{provider}/logins")
+    # `provider` is the base id ("openai"); `account` scopes it. A login's id names its account, so the calls that
+    # take one need none.
+    def auth(account: nil) = get(scoped("/auth", account))
+    def set_api_key(provider, key, account: nil) = put(scoped("/auth/#{provider}/api_key", account), { key: key })
+    def start_login(provider, account: nil) = post(scoped("/auth/#{provider}/logins", account))
     def login(provider, id) = get("/auth/#{provider}/logins/#{id}")
     def complete_login(provider, id, url) = post("/auth/#{provider}/logins/#{id}/callback", { url: url })
     def cancel_login(provider, id) = delete("/auth/#{provider}/logins/#{id}")
-    def logout(provider) = delete("/auth/#{provider}")
+    def logout(provider, account: nil) = delete(scoped("/auth/#{provider}", account))
 
     def reload_tools = post("/tools/reload")
 
@@ -64,6 +68,11 @@ module DurableAgent
       def get(path) = request(Net::HTTP::Get.new(path))
       def delete(path) = request(Net::HTTP::Delete.new(path))
       def post(path, body = {}) = request(Net::HTTP::Post.new(path), body)
+      def put(path, body = {}) = request(Net::HTTP::Put.new(path), body)
+
+      def scoped(path, account)
+        account.nil? ? path : "#{path}?#{URI.encode_www_form(account: account)}"
+      end
 
       def request(http_request, body = nil)
         http_request["Authorization"] = "Bearer #{token}"
@@ -80,6 +89,7 @@ module DurableAgent
 
         body = parse(response.body)
         raise Unavailable.new(503, body, "sidecar is starting") if starting?(response, body)
+        raise ArgumentError, "invalid account" if invalid_account?(response, body)
 
         case response
         when Net::HTTPSuccess then body || {}
@@ -93,6 +103,11 @@ module DurableAgent
       # Until the harness has resumed (after tools load) the sidecar answers commands with 503 "starting".
       def starting?(response, body)
         response.code == "503" && body.is_a?(Hash) && body["error"] == "starting"
+      end
+
+      # Ruby validates accounts before sending them, so this is a programming error rather than a sidecar failure.
+      def invalid_account?(response, body)
+        response.code == "422" && body.is_a?(Hash) && body["error"] == "invalid_account"
       end
 
       def parse(body)
