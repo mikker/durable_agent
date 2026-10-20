@@ -126,16 +126,12 @@
 
   <section>
     <h2>Install, use</h2>
-    <div class="grid-2">
-      <div>
-        <h3>Install</h3>
+    <h3>Install</h3>
 <pre><code>bundle add durable_agent
 bin/rails g durable_agent:install   # migration, initializer, mount, Procfile.dev line
 bin/rails db:migrate                # twelve durable_agent_* tables
 bin/dev                             # web, sidecar</code></pre>
-      </div>
-      <div>
-        <h3>Use</h3>
+    <h3>Use</h3>
 <pre><code>conversation = DurableAgent.start            # model from config
 conversation.say("Summarize the invoice",
                  request_id: message.id)      # idempotent
@@ -144,8 +140,6 @@ conversation.busy?                           # the pi.live document
 
 # in the view
 turbo_stream_from conversation               # refresh broadcasts, morph</code></pre>
-      </div>
-    </div>
     <p class="prose"><code>say</code> is idempotent on <code>request_id</code> and returns the submission row, committed before the sidecar answers. Tools are Ruby classes (below). The app brings its own <code>pg</code> or <code>sqlite3</code>.</p>
   </section>
 
