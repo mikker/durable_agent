@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.1.0 (2026-10-20)
+
+First release, to claim the name. Early: the contract (DESIGN.md) may still change.
 
 - Accounts: `DurableAgent.start(account:)` runs a conversation on an account's own provider credentials (a user's
   API key or ChatGPT plan) instead of the app's. `Connection.new(provider, account:)` signs an account in, with

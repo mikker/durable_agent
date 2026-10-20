@@ -26,7 +26,7 @@ Gem::Specification.new do |spec|
 
   spec.files = Dir.chdir(File.expand_path(__dir__)) do
     Dir["{app,config,db,lib}/**/*", "sidecar/dist/**/*", "sidecar/sql/**/*", "sidecar/package.json",
-        "MIT-LICENSE", "Rakefile", "README.md", "DESIGN.md", "CHANGELOG.md"]
+        "MIT-LICENSE", "Rakefile", "README.md", "DESIGN.md", "CHANGELOG.md", "docs/guide.md"]
   end
 
   spec.add_dependency "rails", ">= 8.0"
