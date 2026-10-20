@@ -436,12 +436,13 @@ turbo_stream_from conversation            <span class="hl-c"># refresh broadcast
       <table>
         <tbody>
           <tr><td><code>GET /health</code></td><td>{ok, schemaVersion, harnessSchemaVersion, database, model, tools, resumed}</td></tr>
-          <tr><td><code>POST /conversations</code></td><td>{model?, instructions?} → 201 {id}; 422 unknown model</td></tr>
+          <tr><td><code>POST /conversations</code></td><td>{model?, instructions?, account?} → 201 {id}; 422 unknown model or invalid account. With <code>account</code>, the conversation runs on that account's credential.</td></tr>
           <tr><td><code>POST /conversations/:id/submissions</code></td><td>{content, request_id, when_busy?} → 202 {id, status}; 409 busy; 404. Idempotent; row committed first.</td></tr>
           <tr><td><code>POST /conversations/:id/abort</code></td><td>200 {ok}</td></tr>
-          <tr><td><code>GET /auth</code></td><td>{provider → {type} | null}</td></tr>
-          <tr><td><code>POST /auth/:provider/logins</code></td><td>start; <code>GET …/:id</code> polls, <code>POST …/:id/callback</code> finishes, <code>DELETE …/:id</code> cancels</td></tr>
-          <tr><td><code>DELETE /auth/:provider</code></td><td>sign out</td></tr>
+          <tr><td><code>GET /auth?account=</code></td><td>{provider → {type, source} | null}, the app's or the account's</td></tr>
+          <tr><td><code>PUT /auth/:provider/api_key?account=</code></td><td>{key} → stored encrypted; 422 blank key</td></tr>
+          <tr><td><code>POST /auth/:provider/logins?account=</code></td><td>start; <code>GET …/:id</code> polls, <code>POST …/:id/callback</code> finishes, <code>DELETE …/:id</code> cancels</td></tr>
+          <tr><td><code>DELETE /auth/:provider?account=</code></td><td>sign out</td></tr>
           <tr><td><code>POST /tools/reload</code></td><td>re-fetch tools → {tools}</td></tr>
         </tbody>
       </table>
@@ -450,7 +451,7 @@ turbo_stream_from conversation            <span class="hl-c"># refresh broadcast
     <div class="grid-2">
       <div>
         <h3>Events (sidecar → gem)</h3>
-        <p><code>POST /durable_agent/events</code>. Per conversation: <code>config.on_change</code>. Per report: <code>config.on_report</code>. Per auth change: <code>config.on_auth</code>. Unknown ids skipped, callback errors reported, always <code>204</code>.</p>
+        <p><code>POST /durable_agent/events</code>. Per conversation: <code>config.on_change</code>. Per report: <code>config.on_report</code>. Per credential change: <code>config.on_auth</code> with provider ids, scoped for accounts (<code>openai@u42</code>). Unknown ids skipped, callback errors reported, always <code>204</code>.</p>
       </div>
       <div>
         <h3>Tools (sidecar → gem)</h3>
@@ -475,6 +476,23 @@ turbo_stream_from conversation            <span class="hl-c"># refresh broadcast
       </table>
     </div>
     <p class="prose">No harness file. Unknown default model: logged, sidecar runs. No credentials: runs settle <code>unanswered</code>. Missing tables: boot stops.</p>
+  </section>
+
+  <section>
+    <h2>Accounts</h2>
+    <p class="prose">An account names whose credential a conversation runs on. It is an app-chosen string, typically a user id. The sidecar carries it in the provider id: <code>openai@u42</code> is account <code>u42</code>'s OpenAI, <code>openai@u42/gpt-6.1-sol</code> its model ref, and no <code>@</code> is the app's own. pi-ai keys credentials, logins and auth checks by provider id, and each conversation pins its provider in <code>pi.agent</code>, so one mechanism covers who pays:</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Who pays</th><th>Credential</th><th>Conversation</th></tr></thead>
+        <tbody>
+          <tr><td>the app, for everyone</td><td><code>OPENAI_API_KEY</code>, <code>connection.set_api_key</code>, or Sign in with ChatGPT in Settings</td><td><code>DurableAgent.start</code></td></tr>
+          <tr><td>each user, API key</td><td><code>Connection.new("openai", account: user.id).set_api_key(key)</code></td><td><code>DurableAgent.start(account: user.id)</code></td></tr>
+          <tr><td>each user, ChatGPT plan</td><td><code>Connection.new("openai", account: user.id).start_login</code></td><td><code>DurableAgent.start(account: user.id)</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="prose">The sidecar registers a clone of the base provider under the scoped id on demand and at boot from the credentials table: same catalog, same auth methods, one more credential row. A conversation on an account whose credential is gone settles <code>no_model</code>. Usage per account is the sum of <code>pi.usage</code> over its conversations.</p>
+    <p class="prose">Sign in with ChatGPT is pi-ai's OpenAI OAuth: a public client registered per login, scope <code>chatgpt.tokens.use.direct</code>, the token sent to the Responses API, usage drawn from the signed-in user's plan. The redirect is <code>127.0.0.1:1455</code>: on the sidecar's host the listener completes the login; elsewhere the user pastes the final URL into the app.</p>
   </section>
 
   <section>
@@ -538,21 +556,24 @@ turbo_stream_from conversation            <span class="hl-c"># refresh broadcast
 
   <section>
     <h2>Reading the tables from Ruby</h2>
-<pre><code class="lang-ruby"><span class="hl-n">DurableAgent</span>.start(model: <span class="hl-k">nil</span>, instructions: <span class="hl-k">nil</span>)   <span class="hl-c"># =&gt; Conversation, created on the sidecar</span>
+<pre><code class="lang-ruby"><span class="hl-n">DurableAgent</span>.start(model: <span class="hl-k">nil</span>, instructions: <span class="hl-k">nil</span>, account: <span class="hl-k">nil</span>)   <span class="hl-c"># =&gt; Conversation, created on the sidecar</span>
 <span class="hl-n">DurableAgent</span>.conversation(id)
-<span class="hl-n">DurableAgent</span>.auth                                   <span class="hl-c"># =&gt; {&quot;openai&quot; =&gt; {&quot;type&quot; =&gt; &quot;oauth&quot;}, &quot;anthropic&quot; =&gt; nil}</span>
+<span class="hl-n">DurableAgent</span>.auth(account: <span class="hl-k">nil</span>)                                   <span class="hl-c"># =&gt; {&quot;openai&quot; =&gt; {&quot;type&quot; =&gt; &quot;oauth&quot;}, &quot;anthropic&quot; =&gt; nil}</span>
+<span class="hl-n">DurableAgent</span>.auth_stream(account)                                 <span class="hl-c"># &quot;durable_agent:auth:u42&quot;, for turbo_stream_from</span>
 
-conversation.say(<span class="hl-s">&quot;Hello&quot;</span>, request_id: message.id)   <span class="hl-c"># =&gt; Submission, the row exists</span>
+conversation.say(<span class="hl-s">&quot;Hello&quot;</span>, request_id: message.id)                 <span class="hl-c"># =&gt; Submission, the row exists</span>
 conversation.abort
-conversation.transcript                             <span class="hl-c"># visible entries, oldest first</span>
+conversation.transcript                                           <span class="hl-c"># visible entries, oldest first</span>
 conversation.entries / submissions / tasks / reports / documents
 conversation.live / busy? / streaming_message / running_tools / inbox / last_failure
-conversation.model / total_tokens / total_cost / usage_by_model
+conversation.model / provider / account / total_tokens / total_cost / usage_by_model
 conversation.parent / parent_at
 entry.text / tool_calls / model_ref / stop_reason / total_tokens / cost
 entry.duration_ms / timestamp / failed? / error_message
 
-<span class="hl-n">DurableAgent::Connection</span>.new(<span class="hl-s">&quot;openai&quot;</span>).connected? / start_login / complete_login(id, url) / disconnect</code></pre>
+connection = <span class="hl-n">DurableAgent::Connection</span>.new(<span class="hl-s">&quot;openai&quot;</span>, account: user.id)
+connection.connected? / api_key? / subscription? / source
+connection.set_api_key(key) / start_login / complete_login(id, url) / disconnect</code></pre>
     <p class="prose">Every model is <code>readonly?</code>. Ids are pi's. Records stay JSON text (<code>attribute :record, :json</code>). <code>kind</code>, <code>data</code>, <code>model</code> live in the record, so kind filters run in Ruby and return arrays.</p>
     <div class="grid-2">
       <div>
@@ -603,7 +624,6 @@ entry.duration_ms / timestamp / failed? / error_message
   <section>
     <h2>Out of scope</h2>
     <ul class="prose">
-      <li><strong>Per-user provider accounts.</strong> The app signs in to OpenAI or Anthropic once; every user's conversations run on that account. Users are the app's concern.</li>
       <li><strong>More than one sidecar.</strong> One process per app and database serves every user.</li>
       <li><strong>Compaction, reset, task graph, SSE routes.</strong> pi-durable has them; no need yet.</li>
       <li><strong>Forked conversations' inherited entries.</strong> <code>entries</code> are a conversation's own rows.</li>
@@ -627,6 +647,7 @@ entry.duration_ms / timestamp / failed? / error_message
       <li><strong>Shutdown has a deadline.</strong> 10 s for requests, 30 s total, second signal exits.</li>
       <li><strong>Events are hints.</strong> Debounced, one retry, then dropped. The tables are correct without them.</li>
       <li><strong>Bases exactly where the core keeps one revision.</strong> Rewindable documents keep deltas; <code>HistoryNotSupported</code> makes a violation loud.</li>
+      <li><strong>Accounts are provider ids.</strong> <code>openai@u42</code> rides every path pi-ai and pi-durable already key by provider: credential rows, logins, the model pinned per conversation. No schema change, no pi-durable change.</li>
       <li><strong>Small guarantees.</strong> Zero-setup tokens in development and test. Tools as class names survive reloading. A wrong default model does not take the service down.</li>
     </ul>
   </section>
@@ -640,6 +661,7 @@ entry.duration_ms / timestamp / failed? / error_message
       <li><strong>Installer, rake task, bundle.</strong><span>Done.</span></li>
       <li><strong>Resilience under real failures.</strong><span>Done. Backend terminated inside a transaction, SQLite lock held from another process, storage failure exiting 1, restart during a replay-safe tool call, failing reads around a commit.</span></li>
       <li><strong>A real app on the gem.</strong><span>Done. A Nitro Kit chat app on SQLite: tools, answers, events, sign-in.</span></li>
+      <li class="open"><strong>Accounts: scoped credentials, API keys, Sign in with ChatGPT per account.</strong><span>In progress.</span></li>
       <li class="open"><strong>A real-provider run with a tool call.</strong><span>Open. Needs a live sign-in.</span></li>
     </ol>
     <h3>Known limitations</h3>

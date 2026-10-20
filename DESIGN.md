@@ -41,6 +41,7 @@ browser ◀─Turbo─ Puma ◀─POST /durable_agent/events─ sidecar (node)
 | Schema versions | `durable_agent_durable_schema.version` is pi-durable's (1 for pi-durable 1.3.0); `durable_agent_settings` row `schema_version` is the gem's (2); `GET /health` reports both |
 | Sidecar | `sidecar/` (TypeScript), bundled to `sidecar/dist/sidecar.js` by `rake build`, shipped in the gem |
 | Env prefix | `DURABLE_AGENT_*`, read by both halves |
+| Account | an app-chosen string (`[A-Za-z0-9_.-]{1,64}`, typically a user id) naming whose provider credentials a conversation runs on; `openai@u42` is the account `u42`'s OpenAI provider id, `openai@u42/gpt-6.1-sol` its model ref; no `@` is the app's own account |
 
 ## Schema
 
@@ -222,7 +223,17 @@ Rails encodes them with `DurableAgent::IndexedString` (`JSON.generate`), never `
   Dumps and replicas hold ciphertext; the sidecar holds the key, so anyone with the database and the token can
   decrypt; Rails never decrypts. Rotating the token makes stored sign-ins unreadable: the sidecar logs a warning
   per provider and treats them as absent until the user signs in again. Plaintext rows are rewritten encrypted on
-  the next modify. Modifications to one provider are serialized.
+  the next modify. Modifications to one provider are serialized. Rows are keyed by provider id, scoped or not:
+  `openai` is the app's credential, `openai@u42` the account `u42`'s.
+- `accounts.ts`: accounts as provider ids. `scopedProviderId("openai", "u42")` is `openai@u42`;
+  `parseProviderId` splits it back; `ensureAccountProvider(models, base, account)` registers a clone of the base
+  provider (the same factory, `openaiProvider()`, `anthropicProvider()` or faux, with the scoped id) when
+  `models.getProvider` does not know it, so the catalog, auth methods and request code are the base provider's and
+  only the credential row differs. At boot every scoped provider id in `durable_agent_credentials` is registered;
+  `POST /conversations` and the auth routes register on demand. pi-ai keys the credential store, `login`, `logout`
+  and `checkAuth` by provider id, and a conversation pins its provider in `pi.agent`, so a conversation started on
+  `openai@u42` resolves that account's credential on every request, including after a restart. An account whose
+  credential is gone settles its runs `unanswered` with reason `no_model`.
 - `reports.ts`: `createReporter(db, events)` stores Harness reports (faulted tasks, hook errors, a failed session)
   with `RETURNING id` and `CURRENT_TIMESTAMP`, then `events.report(id)`. pi-durable 1.3.0 calls `onReport(error)`
   with one argument; the `info` of newer releases is read when present. The reporter tracks its inserts in flight;
@@ -267,16 +278,17 @@ resolved before the commit (see above). `task` writes are ignored. Queuing the i
 
 `Events` debounces for 100 ms (a steady stream still posts every 100 ms) and does
 `POST {RAILS_URL}/durable_agent/events` with the bearer token and `{"conversations": [7, 9], "reports": [3],
-"auth": ["openai"]}`. `auth` names the providers whose sign-in changed (a login reached `done`, or `DELETE
-/auth/:provider` signed one out) and is left out when there are none.
+"auth": ["openai"]}`. `auth` names the provider ids whose credential changed (a login reached `done`, an API key was stored, or
+`DELETE /auth/:provider` signed one out), scoped when an account's: `["openai", "openai@u42"]`. It is left out
+when there are none.
 A non-2xx or network error is retried once after 1 s, then logged at `warn` and dropped: events are a hint, the
 state is in the database, and the next event or page load shows it. Unset `DURABLE_AGENT_RAILS_URL` disables
 events with one boot log line. `flush()` is awaited on shutdown, after the Harness has closed.
 
 ### Boot and shutdown (`main.ts`)
 
-Open the database from `DATABASE_URL` → check the gem schema version → credential store and models → device id →
-logins → Harness over `ChangeTracker(withBaseDocuments(openHarnessStorage(db)))` → ensure the root conversation →
+Open the database from `DATABASE_URL` → check the gem schema version → credential store and models → account
+providers from the credentials table → device id → logins → Harness over `ChangeTracker(withBaseDocuments(openHarnessStorage(db)))` → ensure the root conversation →
 serve → load tools (awaited, with the bounded boot retry; a failure or an unset Rails URL falls through with no
 tools) → log "resuming with N tools" → `resume()`. Every step up to the root conversation runs inside one handler:
 a missing table at any of them (SQLite "no such table", Postgres `42P01`, also as a cause) is reported as
@@ -303,15 +315,19 @@ routes 404. The login routes with an `:id` answer 404 unless that login belongs 
 | Method | Path | Request | Response |
 |---|---|---|---|
 | GET | `/health` | | `200 {ok: true, schemaVersion: 2, harnessSchemaVersion: 1, database: "postgres" \| "sqlite", model: {provider, modelId}, tools: [names], resumed: boolean}`; `503 {ok: false, error}` once the Harness has closed |
-| POST | `/conversations` | `{model?: {provider, modelId}, instructions?}` | `201 {id}`; `422 {error, suggestions: [ids]}` for an unknown model |
+| POST | `/conversations` | `{model?: {provider, modelId}, instructions?, account?}` | `201 {id}`; `422 {error, suggestions: [ids]}` for an unknown model; `422 {error: "invalid_account"}`. With `account`, the model's provider becomes `provider@account` and the conversation runs on that account's credential. |
 | POST | `/conversations/:id/submissions` | `{content, request_id, when_busy?: "followUp" \| "steer" \| "reject"}` | `202 {id, status}`; `404`; `409 {error: "conversation_busy"}`; `503 {error: "starting"}` before resume |
 | POST | `/conversations/:id/abort` | | `200 {ok: true}`; `503 {error: "starting"}` before resume |
-| GET | `/auth` | | `200 {"<provider>": {type: "oauth" \| "api_key"} \| null, ...}` |
-| POST | `/auth/:provider/logins` | | `201 <login>`; `422 <login>` when it failed at once |
+| GET | `/auth?account=` | | `200 {"<provider>": {type: "oauth" \| "api_key", source} \| null, ...}` for the app's providers, or the account's, under their base names |
+| PUT | `/auth/:provider/api_key?account=` | `{key}` | `200 {type: "api_key", source: "stored credential"}` stores the key, encrypted; `422 {error}` for a blank key or a provider without API-key auth |
+| POST | `/auth/:provider/logins?account=` | | `201 <login>`; `422 <login>` when it failed at once |
 | GET | `/auth/:provider/logins/:id` | | `200 <login>`; `404` |
 | POST | `/auth/:provider/logins/:id/callback` | `{url}` (the redirect URL the browser ended on) | `200 <login>` |
 | DELETE | `/auth/:provider/logins/:id` | | `200 <login>` (cancelled) |
-| DELETE | `/auth/:provider` | | `200 {ok: true}` (sign out) |
+| DELETE | `/auth/:provider?account=` | | `200 {ok: true}` (sign out) |
+
+`:provider` is the base provider id; `account` scopes it. `<login>.provider` carries the scoped id. Every account
+route answers `422 {error: "invalid_account"}` for an account outside `[A-Za-z0-9_.-]{1,64}`.
 | POST | `/tools/reload` | | `200 {tools: [names]}` re-fetches tool definitions from Rails |
 
 `<login>` = `{id, provider, status: "starting" | "awaiting_browser" | "exchanging" | "done" | "failed", url?, instructions?, deviceCode?: {userCode, verificationUri}, messages: [], error?}`.
@@ -385,7 +401,8 @@ with the error itself sent to `Rails.error.report`, so messages carrying SQL, pa
 `POST /durable_agent/events` (engine route `events#create`), same bearer check as tools. Body
 `{"conversations": [ids], "reports": [ids], "auth": ["openai"]}`, every key optional. For each conversation that
 exists, `config.on_change.call(conversation)`; for each report, `config.on_report.call(report)`; when `auth` names
-providers, `config.on_auth.call(providers)` once. Unknown ids are skipped. Callback errors go to
+provider ids, `config.on_auth.call(providers)` once with them as given (`"openai"`, `"openai@u42"`). Unknown ids
+are skipped. Callback errors go to
 `Rails.error.report` and never fail the request. Responds 204.
 
 The bearer check (tools and events) wants exactly `Authorization: Bearer <token>`: the scheme is case-sensitive,
@@ -393,8 +410,30 @@ then one space, then the token, compared in constant time. A bare token or any o
 
 The default callbacks broadcast Turbo refreshes from Puma: `on_change` to the conversation (`turbo_stream_from
 conversation`); `on_report` to `report.conversation`, or to the stream `"durable_agent:reports"` when the report
-has none (every report on pi-durable 1.3.0); `on_auth` to the stream `"durable_agent:auth"`, which a settings page
-subscribes to with `turbo_stream_from "durable_agent:auth"`.
+has none (every report on pi-durable 1.3.0); `on_auth` to the stream `"durable_agent:auth"` and, for each account named, `"durable_agent:auth:<account>"`;
+a settings page subscribes with `turbo_stream_from DurableAgent.auth_stream(account)`.
+
+## Accounts
+
+Who pays for a conversation is a property of the account it runs on. Three arrangements, all through the same
+mechanism:
+
+| Arrangement | Credential | Conversation |
+|---|---|---|
+| The app pays, one API key or sign-in for everyone | the app's: `OPENAI_API_KEY` in the environment, `connection.set_api_key`, or Sign in with ChatGPT on the Settings page | `DurableAgent.start` |
+| Each user pays with an API key | `Connection.new("openai", account: user.id).set_api_key(key)` | `DurableAgent.start(account: user.id)` |
+| Each user pays with their ChatGPT plan | `Connection.new("openai", account: user.id).start_login`, then the user approves in the browser | `DurableAgent.start(account: user.id)` |
+
+The app decides which account a conversation runs on and what to do when an account has no credential:
+`DurableAgent.auth(account:)` says, and `start` without `account:` runs on the app's. A user's sign-out
+(`connection.disconnect`) leaves their running conversations settling `no_model` until they connect again. Usage
+per account is the sum of `pi.usage` over that account's conversations, which the app relates to its users.
+
+Sign in with ChatGPT is pi-ai's OpenAI OAuth: a public client registered dynamically per login, scopes
+`openid profile email offline_access resource.invoke chatgpt.tokens.use.direct`, the resulting token sent to the
+Responses API, usage drawn from the signed-in user's plan. Its redirect is `http://127.0.0.1:1455/auth/callback`.
+When the browser runs on the sidecar's host, the sidecar's listener completes the login; a user elsewhere lands
+on their own machine's port 1455 and pastes the final URL into the app, which posts it to the callback route.
 
 ## Ruby API
 
@@ -410,15 +449,17 @@ DurableAgent.configure do |config|
   config.parent_record_class = "ApplicationRecord" # DurableAgent::ApplicationRecord's superclass; default "ActiveRecord::Base"
   config.on_change = ->(conversation) { ... }   # default: Turbo::StreamsChannel.broadcast_refresh_to(conversation)
   config.on_report = ->(report) { ... }         # default: refresh report.conversation, else "durable_agent:reports"
-  config.on_auth = ->(providers) { ... }        # default: refresh "durable_agent:auth"
+  config.on_auth = ->(providers) { ... }        # provider ids, scoped for accounts ("openai@u42"); default: refresh
+                                                # "durable_agent:auth" and "durable_agent:auth:<account>" for each account named
 end
 
-DurableAgent.start(model: nil, instructions: nil)   # => DurableAgent::Conversation (created on the sidecar, then found)
+DurableAgent.start(model: nil, instructions: nil, account: nil)   # => DurableAgent::Conversation (created on the sidecar, then found)
 DurableAgent.conversation(id)
-DurableAgent.auth   # => {"openai" => {"type" => "oauth", "source" => "OAuth"},
-                    #     "anthropic" => {"type" => "api_key", "source" => "ANTHROPIC_API_KEY"}, "google" => nil, ...}
-                    # every provider pi-ai knows, signed in or not, plus "faux", the offline model;
-                    # `source` is pi-ai's: "OAuth", "stored credential", or the environment variable it read
+DurableAgent.auth(account: nil)   # => {"openai" => {"type" => "oauth", "source" => "OAuth"},
+                                  #     "anthropic" => {"type" => "api_key", "source" => "ANTHROPIC_API_KEY"}, "google" => nil, ...}
+                                  # the app's providers, or the account's under their base names; `source` is pi-ai's:
+                                  # "OAuth", "stored credential", or the environment variable it read
+DurableAgent.auth_stream(account = nil)   # "durable_agent:auth" or "durable_agent:auth:u42", for turbo_stream_from
 
 conversation.say("Hello", request_id: message.id, when_busy: nil)   # => DurableAgent::Submission (persisted)
 conversation.abort
@@ -426,13 +467,18 @@ conversation.transcript                              # Array of visible entries,
 conversation.entries / submissions / tasks / reports / documents
 conversation.document("pi.live") / live / busy? / streaming_message / running_tools / inbox / last_failure
 conversation.model / agent / usage / usage_by_model / total_tokens / total_cost   # pi.agent and pi.usage
+conversation.provider / account                      # "openai" and "u42" from model "openai@u42/gpt-6.1-sol"; account nil for the app's
 entry.message / provider / model_id / model_ref / stop_reason / error_message / usage / total_tokens / cost / duration_ms / timestamp
 entry.failed? / answer?                              # an assistant entry whose request ended in an error or abort is no answer
 conversation.parent / parent_at                      # from record["parent"]: the parent Conversation and the Entry it forked at
 conversation.created_at / last_activity_at           # the row's insert time; the newest entry's created_at, else created_at
 DurableAgent::Conversation.root / top_level          # the root the sidecar creates at boot (id 1); the others no task owns
 
-DurableAgent::Connection.new("openai").connected? / subscription? / unreachable? / error / start_login / login(id) / complete_login(id, url) / cancel_login(id) / disconnect
+DurableAgent::Connection.new("openai", account: nil)   # the app's OpenAI sign-in, or account u42's
+connection.connected? / subscription? / api_key? / unreachable? / error / source
+connection.set_api_key(key) / start_login / login(id) / complete_login(id, url) / cancel_login(id) / disconnect
+connection.account / stream_name                      # DurableAgent.auth_stream(account)
+DurableAgent::Connection.all(account: nil)
 ```
 
 Models in `app/models/durable_agent/`, all `readonly?`, all over the tables above, inheriting
@@ -547,5 +593,5 @@ Both suites run on both databases.
 - Ruby in 37signals style: fat models, thin controllers, concerns, no service objects, Minitest, fixtures.
 - TypeScript: strict, ESM, `.ts` imports, Node 22.19+ (type stripping), runnable from source without a build.
 - Do not commit from an agent; the orchestrator commits.
-- Out of scope today: per-user credentials, more than one sidecar, compaction/reset/task-graph routes, any UI,
-  MCP, a Ruby port of chord deltas, following forked conversations' inherited entries.
+- Out of scope today: more than one sidecar, compaction/reset/task-graph routes, any UI, MCP, a Ruby port of
+  chord deltas, following forked conversations' inherited entries.
