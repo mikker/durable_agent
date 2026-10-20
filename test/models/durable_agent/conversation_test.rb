@@ -36,7 +36,7 @@ class DurableAgent::ConversationTest < ActiveSupport::TestCase
   test "model is pinned in the pi.agent document" do
     assert_equal "faux/faux-1", durable_agent_conversations(:failed).model
     assert_equal({ "model" => { "provider" => "faux", "modelId" => "faux-1" } }, durable_agent_conversations(:failed).agent)
-    assert_nil durable_agent_conversations(:idle).model, "no pi.agent document yet"
+    assert_nil durable_agent_conversations(:busy).model, "no pi.agent document yet"
   end
 
   test "provider and account come from the pinned model" do
@@ -49,16 +49,16 @@ class DurableAgent::ConversationTest < ActiveSupport::TestCase
     assert_equal "openai", errored.provider
     assert_nil errored.account
 
-    assert_nil durable_agent_conversations(:idle).provider
-    assert_nil durable_agent_conversations(:idle).account
+    assert_nil durable_agent_conversations(:busy).provider, "no pi.agent document yet"
+    assert_nil durable_agent_conversations(:busy).account
   end
 
   test "documents are the conversation's current ones" do
     idle = durable_agent_conversations(:idle)
 
-    assert_equal [ durable_agent_documents(:idle_live), durable_agent_documents(:idle_usage) ], idle.documents.order(:id).to_a
+    assert_equal [ durable_agent_documents(:idle_live), durable_agent_documents(:idle_usage), durable_agent_documents(:idle_agent) ], idle.documents.order(:id).to_a
     assert_equal [], idle.inbox, "the retired pi.inbox incarnation is not read"
-    assert_equal({}, idle.document("pi.agent"))
+    assert_equal({}, idle.document("pi.provider"))
   end
 
   test "last failure is the newest unanswered input after the last answer" do

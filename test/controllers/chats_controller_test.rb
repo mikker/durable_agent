@@ -84,7 +84,7 @@ class ChatsControllerTest < ActionDispatch::IntegrationTest
 
   test "show explains the last unanswered input" do
     get chat_path(chats(:failed))
-    assert_select "#live [data-nk=alert]", /No model could run/
+    assert_select "#live [data-nk=alert]", /Model faux\/faux-1 is not available/
     assert_select "button", text: "Stop", count: 0
   end
 

@@ -70,16 +70,19 @@ busy_question:
   id: 900201
   conversation_id: 900002
   commit_seq: 6
+  created_at: <%= 70.minutes.ago.to_fs(:db) %>
   record: <%= json_text({ id: 900201, conversationId: 900002, kind: "pi.user", model: [ { role: "user", content: "Write me a poem" } ] }) %>
 
 failed_answer:
   id: 900301
   conversation_id: 900003
   commit_seq: 7
+  created_at: <%= 3.hours.ago.to_fs(:db) %>
   record: <%= json_text({ id: 900301, conversationId: 900003, kind: "pi.assistant", model: [ { role: "assistant", content: "Earlier answer." } ] }) %>
 
 failed_question:
   id: 900302
   conversation_id: 900003
   commit_seq: 8
+  created_at: <%= 2.hours.ago.to_fs(:db) %>
   record: <%= json_text({ id: 900302, conversationId: 900003, kind: "pi.user", model: [ { role: "user", content: "Are you there?" } ] }) %>

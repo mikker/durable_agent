@@ -578,7 +578,8 @@ Other Ruby:
 
 Both suites run on both databases.
 
-- Ruby: Minitest with the dummy app. `test/dummy/config/database.yml` selects the adapter from
+- Ruby: Minitest with the dummy app, which is the example app (slopdep: a Nitro Kit chat UI, three tools, a
+  settings page; its own tests are in the suite). `test/dummy/config/database.yml` selects the adapter from
   `DURABLE_AGENT_DB` (`sqlite`, the default, files under `test/dummy/storage/`; `postgres` with
   `durable_agent_development` / `durable_agent_test`). `rake test` runs on SQLite, `rake test:postgres` on
   Postgres, `rake test:all` both. Fixtures use ids ≥ 900000 and `record` JSON in pi-durable's shapes. Covered:

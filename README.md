@@ -403,7 +403,7 @@ Rows for the harness tables can also come from fixtures under `test/fixtures/dur
 
 ```sh
 (cd sidecar && npm install)        # enables the round-trip test
-bin/rails test                     # SQLite (test/dummy/storage/test.sqlite3)
+rake test                          # SQLite (test/dummy/storage/test.sqlite3); builds the dummy app's CSS first
 DURABLE_AGENT_DB=postgres bin/rails db:create
 DURABLE_AGENT_DB=postgres bin/rails test   # Postgres: durable_agent_test
 bundle exec rake test:all          # both

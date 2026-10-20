@@ -11,7 +11,7 @@ class DurableAgent::SidecarTest < ActiveSupport::TestCase
     assert_equal "http://127.0.0.1:3000", env["DURABLE_AGENT_RAILS_URL"]
     assert_equal "openai/gpt-6.1-sol", env["DURABLE_AGENT_MODEL"]
     assert_equal Rails.root.join("storage/durable_agent").to_s, env["DURABLE_AGENT_WORKSPACE_ROOT"]
-    assert_equal "Dummy", env["DURABLE_AGENT_NAME"]
+    assert_equal "Slopdep", env["DURABLE_AGENT_NAME"]
     assert_equal %w[ DATABASE_URL DURABLE_AGENT_TOKEN DURABLE_AGENT_HOST DURABLE_AGENT_PORT DURABLE_AGENT_RAILS_URL
       DURABLE_AGENT_MODEL DURABLE_AGENT_WORKSPACE_ROOT DURABLE_AGENT_NAME ], env.keys - DurableAgent::Sidecar::PASS_THROUGH
     assert env.values.all?(String)

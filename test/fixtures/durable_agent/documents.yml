@@ -24,6 +24,13 @@ idle_retired_inbox:
   retired_at: 3
   record: <%= record.(900502, "pi.inbox", 900001, "latest", retiredAt: 3) %>
 
+idle_agent:
+  <<: *DEFAULTS
+  id: 900509
+  kind: <%= indexed("pi.agent") %>
+  owner_id: 900001
+  record: <%= record.(900509, "pi.agent", 900001, "rewindable") %>
+
 failed_agent:
   <<: *DEFAULTS
   id: 900506

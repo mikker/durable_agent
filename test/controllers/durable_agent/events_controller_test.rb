@@ -4,12 +4,14 @@ class DurableAgent::EventsControllerTest < ActionDispatch::IntegrationTest
   setup do
     @config = DurableAgent.config
     @changed, @reported, @signed_in = [], [], []
+    @callbacks = [ @config.on_change, @config.on_report, @config.on_auth ]
     @config.on_change = ->(conversation) { @changed << conversation }
     @config.on_report = ->(report) { @reported << report }
     @config.on_auth = ->(providers) { @signed_in << providers }
   end
 
-  teardown { @config.on_change = @config.on_report = @config.on_auth = nil }
+  # The dummy app's initializer sets its own callbacks; put them back for the app's tests.
+  teardown { @config.on_change, @config.on_report, @config.on_auth = @callbacks }
 
   test "requires the shared token" do
     post "/durable_agent/events", params: { conversations: [ 900001 ] }, as: :json

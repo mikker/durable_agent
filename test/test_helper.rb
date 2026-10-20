@@ -1,6 +1,11 @@
 # Configure Rails Environment
 ENV["RAILS_ENV"] = "test"
 
+# The dummy app's layout links its Tailwind build, which is gitignored; build it once when it is missing.
+unless File.exist?(File.expand_path("dummy/app/assets/builds/tailwind.css", __dir__))
+  system("bin/rails tailwindcss:build", chdir: File.expand_path("dummy", __dir__), exception: true)
+end
+
 require_relative "../test/dummy/config/environment"
 ActiveRecord::Migrator.migrations_paths = [ File.expand_path("../test/dummy/db/migrate", __dir__) ]
 require "rails/test_help"

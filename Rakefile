@@ -18,15 +18,23 @@ namespace :sidecar do
 end
 task build: "sidecar:build"
 
+# The dummy app's pages need its Tailwind build (gitignored), so the test tasks build it first.
+namespace :dummy do
+  desc "Build test/dummy's CSS"
+  task :css do
+    sh "cd test/dummy && bin/rails tailwindcss:build"
+  end
+end
+
 # The suite runs on either database; database.yml picks the adapter from DURABLE_AGENT_DB.
 desc "Run the tests on SQLite"
-task :test do
+task test: "dummy:css" do
   sh({ "DURABLE_AGENT_DB" => "sqlite" }, "bin/rails test")
 end
 
 namespace :test do
   desc "Run the tests on Postgres (durable_agent_test)"
-  task :postgres do
+  task postgres: "dummy:css" do
     sh({ "DURABLE_AGENT_DB" => "postgres", "RAILS_ENV" => "test" }, "bin/rails db:create")
     sh({ "DURABLE_AGENT_DB" => "postgres" }, "bin/rails test")
   end

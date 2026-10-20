@@ -668,11 +668,11 @@ connection.set_api_key(key) / start_login / complete_login(id, url) / disconnect
     <h2>Status</h2>
     <ol class="steps">
       <li><strong>Storage over the app's database, both adapters, both wrappers.</strong><span>Done. 127 node:test cases on SQLite, 126 on Postgres, 24 of them pi-durable's conformance cases.</span></li>
-      <li><strong>Ruby engine.</strong><span>Done. 161 Minitest runs per adapter, including a full schema comparison.</span></li>
+      <li><strong>Ruby engine.</strong><span>Done. 207 Minitest runs per adapter, the example app's included, with a full schema comparison.</span></li>
       <li><strong>Round trip on each adapter.</strong><span>Done. The real sidecar on <code>faux/faux-1</code> against the test database.</span></li>
       <li><strong>Installer, rake task, bundle.</strong><span>Done.</span></li>
       <li><strong>Resilience under real failures.</strong><span>Done. Backend terminated inside a transaction, SQLite lock held from another process, storage failure exiting 1, restart during a replay-safe tool call, failing reads around a commit.</span></li>
-      <li><strong>A real app on the gem.</strong><span>Done. A Nitro Kit chat app on SQLite: tools, answers, events, sign-in.</span></li>
+      <li><strong>A real app on the gem.</strong><span>Done. <code>test/dummy</code> is slopdep, a Nitro Kit chat app with three tools, a settings page and a morphing live page; it is the engine's dummy app and its tests are part of the gem's suite.</span></li>
       <li><strong>Accounts: scoped credentials, API keys, Sign in with ChatGPT per account.</strong><span>Done. Verified live against the HTTP API: an account's key reaches OpenAI (a 401 naming it), faux answers on an account, a per-account sign-in starts as <code>openai@u42</code>, a stored account credential survives a restart.</span></li>
       <li><strong>A real-provider run with a tool call.</strong><span>Done. <code>gpt-6.1-sol</code> on a Sign in with ChatGPT credential, in the slopdep app: the model called <code>rename_chat</code> and <code>current_time</code> through the Ruby tools endpoint, the renames landed on the app's rows, answers streamed into the morphing live region, and <code>pi.usage</code> recorded tokens and cost per conversation.</span></li>
     </ol>
