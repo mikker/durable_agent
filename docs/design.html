@@ -171,17 +171,17 @@ turbo_stream_from conversation               # refresh broadcasts, morph</code><
             <path d="M0,0 L10,5 L0,10 z" class="svg-accent-text"/>
           </marker>
         </defs>
-        <g font-size="12" fill="currentColor">
+        <g font-size="11" fill="currentColor">
           <!-- Browser -->
           <rect x="30" y="30" width="160" height="56" rx="6" class="svg-box" stroke-width="1.2"/>
-          <text x="110" y="54" text-anchor="middle" font-weight="600">Browser</text>
+          <text x="110" y="54" text-anchor="middle" font-weight="700">Browser</text>
           <text x="110" y="72" text-anchor="middle" class="svg-muted" font-size="11">Turbo, morph refreshes</text>
 
           <!-- Rails app -->
           <rect x="30" y="140" width="270" height="210" rx="8" class="svg-box" stroke-width="1.2"/>
-          <text x="46" y="164" font-weight="600" font-size="13">Rails app (Puma)</text>
+          <text x="46" y="164" font-weight="700" font-size="11">Rails app (Puma)</text>
           <rect x="46" y="176" width="238" height="158" rx="6" fill="none" stroke="currentColor" stroke-width="1" class="svg-dashed"/>
-          <text x="58" y="196" font-weight="600">durable_agent engine</text>
+          <text x="58" y="196" font-weight="700">durable_agent engine</text>
           <text x="58" y="217" font-size="11">Client · HTTP commands</text>
           <text x="58" y="235" font-size="11">Read models over pi-durable's tables</text>
           <text x="58" y="253" font-size="11">EventsController · on_change → Turbo</text>
@@ -191,7 +191,7 @@ turbo_stream_from conversation               # refresh broadcasts, morph</code><
 
           <!-- Sidecar -->
           <rect x="460" y="140" width="250" height="210" rx="8" class="svg-accent" stroke-width="1.4"/>
-          <text x="476" y="164" font-weight="600" font-size="13" class="svg-accent-text">Sidecar (bundled, Node)</text>
+          <text x="476" y="164" font-weight="700" font-size="11" class="svg-accent-text">Sidecar (bundled, Node)</text>
           <text x="476" y="190" font-size="11">HTTP API · 11 handlers</text>
           <text x="476" y="208" font-size="11">pi-durable Harness</text>
           <text x="476" y="226" font-size="11">change tracker + base documents</text>
@@ -202,7 +202,7 @@ turbo_stream_from conversation               # refresh broadcasts, morph</code><
 
           <!-- Provider -->
           <rect x="740" y="30" width="140" height="56" rx="28" class="svg-box" stroke-width="1.2"/>
-          <text x="810" y="54" text-anchor="middle" font-weight="600">Model provider</text>
+          <text x="810" y="54" text-anchor="middle" font-weight="700">Model provider</text>
           <text x="810" y="72" text-anchor="middle" class="svg-muted" font-size="11">OpenAI, Anthropic</text>
           <line x1="680" y1="140" x2="770" y2="90" stroke="currentColor" stroke-width="1.2" marker-end="url(#ah)"/>
           <text x="770" y="124" font-size="11" class="svg-muted">API key or OAuth</text>
@@ -218,13 +218,13 @@ turbo_stream_from conversation               # refresh broadcasts, morph</code><
           <!-- Sidecar -> Rails tools (dashed) -->
           <line x1="460" y1="300" x2="302" y2="300" stroke="currentColor" stroke-width="1.2" class="svg-dashed" marker-end="url(#ah)"/>
           <text x="380" y="292" text-anchor="middle" font-size="11">GET/POST /tools</text>
-          <text x="380" y="318" text-anchor="middle" font-size="10" class="svg-muted">all bearer token</text>
+          <text x="380" y="318" text-anchor="middle" font-size="11" class="svg-muted">all bearer token</text>
 
           <!-- Database -->
           <g>
             <path d="M190 400 a260 16 0 0 1 520 0 v60 a260 16 0 0 1 -520 0 z" class="svg-box" stroke-width="1.2"/>
             <ellipse cx="450" cy="400" rx="260" ry="16" fill="none" stroke="currentColor" stroke-width="1.2"/>
-            <text x="450" y="436" text-anchor="middle" font-weight="600">The app's database · Postgres or SQLite</text>
+            <text x="450" y="436" text-anchor="middle" font-weight="700">The app's database · Postgres or SQLite</text>
             <text x="450" y="456" text-anchor="middle" font-size="11" class="svg-accent-text">durable_agent_* · 9 pi-durable tables + 3 gem tables</text>
           </g>
 
@@ -260,8 +260,8 @@ turbo_stream_from conversation               # refresh broadcasts, morph</code><
             <path d="M0,0 L10,5 L0,10 z" class="svg-accent-text"/>
           </marker>
         </defs>
-        <g font-size="12" fill="currentColor">
-          <g font-weight="600" text-anchor="middle">
+        <g font-size="11" fill="currentColor">
+          <g font-weight="700" text-anchor="middle">
             <text x="70" y="24">Browser</text>
             <text x="260" y="24">Rails (Puma)</text>
             <text x="470" y="24" class="svg-accent-text">Sidecar</text>
@@ -301,7 +301,7 @@ turbo_stream_from conversation               # refresh broadcasts, morph</code><
           <!-- events -->
           <line x1="470" y1="280" x2="262" y2="280" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#ah2-accent)"/>
           <text x="364" y="272" text-anchor="middle" font-size="11" class="svg-accent-text">7 · POST /events {conversations}</text>
-          <text x="364" y="296" text-anchor="middle" font-size="10" class="svg-muted">debounced 100 ms, retried once</text>
+          <text x="364" y="296" text-anchor="middle" font-size="11" class="svg-muted">debounced 100 ms, retried once</text>
           <!-- refresh -->
           <line x1="260" y1="318" x2="72" y2="318" stroke="currentColor" stroke-width="1.3" marker-end="url(#ah2)"/>
           <text x="164" y="310" text-anchor="middle" font-size="11">8 · broadcast_refresh_to</text>
@@ -320,34 +320,34 @@ turbo_stream_from conversation               # refresh broadcasts, morph</code><
     <p class="prose">pi-durable ships a portable storage core, <code>SqliteStorage</code>, that speaks to a small database facade (<code>exec</code>, <code>run</code>, <code>get</code>, <code>all</code>, <code>transaction</code>, <code>close</code>, <code>?</code> placeholders, SQLite dialect). The sidecar gives it one of two adapters behind that facade, chosen by the scheme of <code>DATABASE_URL</code>, and wraps the resulting <code>Storage</code> twice.</p>
     <figure>
       <svg viewBox="0 0 900 380" role="img" aria-label="Storage stack, top to bottom: the pi-durable Harness; ChangeTracker, which posts touched conversation ids after each commit; withBaseDocuments, which folds deltas into bases; pi-durable's SqliteStorage core with the durable_agent_ prefix; the Db facade, which is either pi-durable's node:sqlite adapter over a SQLite file or the gem's PostgresDatabase with translate.ts over a pg pool of two connections to Postgres.">
-        <g font-size="12" fill="currentColor">
+        <g font-size="11" fill="currentColor">
           <text x="30" y="22" font-size="11" class="svg-muted">pi-durable code</text>
           <rect x="130" y="12" width="14" height="12" rx="2" class="svg-box" stroke-width="1"/>
           <text x="170" y="22" font-size="11" class="svg-accent-text">gem code</text>
           <rect x="232" y="12" width="14" height="12" rx="2" class="svg-accent" stroke-width="1"/>
 
           <rect x="30" y="40" width="840" height="40" rx="6" class="svg-box" stroke-width="1.2"/>
-          <text x="46" y="65" font-weight="600">Harness</text>
+          <text x="46" y="65" font-weight="700">Harness</text>
           <text x="854" y="65" text-anchor="end" font-size="11" class="svg-muted">@earendil-works/pi-durable 1.3.0</text>
 
           <rect x="30" y="90" width="840" height="40" rx="6" class="svg-accent" stroke-width="1.3"/>
-          <text x="46" y="115" font-weight="600" class="svg-accent-text">ChangeTracker</text>
+          <text x="46" y="115" font-weight="700" class="svg-accent-text">ChangeTracker</text>
           <text x="854" y="115" text-anchor="end" font-size="11">after each commit: the conversations it touched → Events → POST /durable_agent/events</text>
 
           <rect x="30" y="140" width="840" height="40" rx="6" class="svg-accent" stroke-width="1.3"/>
-          <text x="46" y="165" font-weight="600" class="svg-accent-text">withBaseDocuments</text>
+          <text x="46" y="165" font-weight="700" class="svg-accent-text">withBaseDocuments</text>
           <text x="854" y="165" text-anchor="end" font-size="11">a delta on a history-latest conversation document is committed as a base</text>
 
           <rect x="30" y="190" width="840" height="40" rx="6" class="svg-box" stroke-width="1.2"/>
-          <text x="46" y="215" font-weight="600">SqliteStorage</text>
+          <text x="46" y="215" font-weight="700">SqliteStorage</text>
           <text x="854" y="215" text-anchor="end" font-size="11" class="svg-muted">portable storage core, prefix durable_agent_, finds schema version 1 current</text>
 
           <rect x="30" y="240" width="410" height="60" rx="6" class="svg-box" stroke-width="1.2"/>
-          <text x="46" y="264" font-weight="600">openNodeSqliteDatabase</text>
+          <text x="46" y="264" font-weight="700">openNodeSqliteDatabase</text>
           <text x="46" y="284" font-size="11" class="svg-muted">pi-durable's node:sqlite adapter · WAL, NORMAL, async busy wait ≤ 30 s</text>
 
           <rect x="460" y="240" width="410" height="60" rx="6" class="svg-accent" stroke-width="1.3"/>
-          <text x="476" y="264" font-weight="600" class="svg-accent-text">PostgresDatabase + translate.ts</text>
+          <text x="476" y="264" font-weight="700" class="svg-accent-text">PostgresDatabase + translate.ts</text>
           <text x="476" y="284" font-size="11">pg.Pool of 2 · one serial queue · one retry on connection loss</text>
 
           <path d="M140 322 a95 10 0 0 1 190 0 v30 a95 10 0 0 1 -190 0 z" class="svg-box" stroke-width="1.2"/>
@@ -509,17 +509,17 @@ end</code></pre>
             <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
           </marker>
         </defs>
-        <g font-size="12" fill="currentColor">
+        <g font-size="11" fill="currentColor">
           <rect x="30" y="60" width="170" height="70" rx="6" class="svg-box" stroke-width="1.2"/>
-          <text x="115" y="88" text-anchor="middle" font-weight="600">Model</text>
+          <text x="115" y="88" text-anchor="middle" font-weight="700">Model</text>
           <text x="115" y="108" text-anchor="middle" font-size="11" class="svg-muted">toolCall lookup_invoice</text>
 
           <rect x="340" y="60" width="200" height="70" rx="6" class="svg-accent" stroke-width="1.4"/>
-          <text x="440" y="88" text-anchor="middle" font-weight="600" class="svg-accent-text">Sidecar</text>
+          <text x="440" y="88" text-anchor="middle" font-weight="700" class="svg-accent-text">Sidecar</text>
           <text x="440" y="108" text-anchor="middle" font-size="11">generic Rails tool</text>
 
           <rect x="690" y="60" width="180" height="70" rx="6" class="svg-box" stroke-width="1.2"/>
-          <text x="780" y="88" text-anchor="middle" font-weight="600">Rails</text>
+          <text x="780" y="88" text-anchor="middle" font-weight="700">Rails</text>
           <text x="780" y="108" text-anchor="middle" font-size="11" class="svg-muted">LookupInvoice#call</text>
 
           <line x1="200" y1="80" x2="338" y2="80" stroke="currentColor" stroke-width="1.3" marker-end="url(#ah3)"/>
