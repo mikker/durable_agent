@@ -337,7 +337,16 @@ After each commit the sidecar posts the ids it touched to `POST /durable_agent/e
 `config.on_auth(providers)` when sign-ins changed. The defaults broadcast Turbo refreshes: `on_change` to the
 conversation; `on_report` to the report's conversation, or to the `"durable_agent:reports"` stream when it has
 none (an operator page can `turbo_stream_from "durable_agent:reports"`); `on_auth` to `"durable_agent:auth"`.
-Replace them to broadcast your own partials or to notify other systems. Callback errors go to `Rails.error` and never fail the request. Because the broadcast
+Replace them to broadcast your own partials or to notify other systems. While a model streams, change events
+arrive up to every 100 ms, and a page refresh is a full GET each time; an app that cares sends one Turbo Stream
+message replacing the regions that change (the transcript, the streaming answer, the composer) with
+`method: :morph`, so the browser keeps focus, open details and the draft message:
+
+```ruby
+config.on_change = ->(conversation) { Chat.changed(conversation) }   # see the slopdep example app's Chat#broadcast_changes
+```
+
+Callback errors go to `Rails.error` and never fail the request. Because the broadcast
 happens inside Puma, the default `async` cable adapter works in development. Events are a hint, debounced and
 retried once: the state is already in the database, and the next event or page load shows anything a dropped
 event missed.
