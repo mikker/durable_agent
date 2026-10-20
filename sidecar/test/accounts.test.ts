@@ -12,7 +12,6 @@ import {
 	UnknownBaseProvider,
 } from "../src/accounts.ts";
 import { createProcessModels } from "../src/harness.ts";
-import { testConfig } from "./helpers.ts";
 
 const storeWith = (ids: string[]): CredentialStore =>
 	({
@@ -22,7 +21,7 @@ const storeWith = (ids: string[]): CredentialStore =>
 		list: async () => ids.map((providerId) => ({ providerId, type: "api_key" as const })),
 	}) as CredentialStore;
 
-const processModels = async (ids: string[] = []) => createProcessModels(await testConfig(), storeWith(ids));
+const processModels = (ids: string[] = []) => createProcessModels(storeWith(ids));
 
 test("accounts are 1 to 64 letters, digits, underscores, dots and dashes", () => {
 	for (const good of ["u42", "a", "A.b_c-9", "x".repeat(64)]) assert.ok(isValidAccount(good), good);
@@ -39,7 +38,7 @@ test("scoped provider ids round-trip, splitting on the first @", () => {
 });
 
 test("ensureAccountProvider registers a clone once, with the base provider's models and auth methods", async () => {
-	const models = await processModels();
+	const models = processModels();
 	assert.equal(models.getProvider("openai@u42"), undefined);
 	assert.equal(ensureAccountProvider(models, "openai", "u42"), "openai@u42");
 	const clone = models.getProvider("openai@u42");
@@ -74,7 +73,7 @@ test("an account's provider ignores the app's environment and resolves only its 
 	const previous = process.env.OPENAI_API_KEY;
 	process.env.OPENAI_API_KEY = "sk-app-key";
 	try {
-		const models = await processModels();
+		const models = processModels();
 		ensureAccountProvider(models, "openai", "u42");
 		assert.equal((await models.checkAuth("openai"))?.source, "OPENAI_API_KEY");
 		assert.equal(await models.checkAuth("openai@u42"), undefined);
@@ -85,14 +84,14 @@ test("an account's provider ignores the app's environment and resolves only its 
 });
 
 test("an unknown base provider throws UnknownBaseProvider", async () => {
-	const models = await processModels();
+	const models = processModels();
 	assert.throws(() => ensureAccountProvider(models, "mystery", "u42"), UnknownBaseProvider);
 	assert.throws(() => ensureAccountProvider(models, "toString", "u42"), UnknownBaseProvider);
 	assert.equal(models.getProvider("mystery@u42"), undefined);
 });
 
 test("stored account credentials register their providers, skipping unknown bases", async () => {
-	const models = await processModels();
+	const models = processModels();
 	const registered = await registerStoredAccounts(models, storeWith(["openai", "openai@u42", "anthropic@u7", "mystery@u42", "openai@bad id"]));
 	assert.deepEqual(registered, ["openai@u42", "anthropic@u7"]);
 	assert.ok(models.getProvider("openai@u42"));

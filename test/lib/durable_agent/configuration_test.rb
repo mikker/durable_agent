@@ -107,13 +107,4 @@ class DurableAgent::ConfigurationTest < ActiveSupport::TestCase
     assert_equal DurableAgent::Tool, @config.tool("tool")
     assert_nil @config.tool("missing")
   end
-
-  private
-    def with_config(config)
-      previous = DurableAgent.config
-      DurableAgent.instance_variable_set(:@config, config)
-      yield
-    ensure
-      DurableAgent.instance_variable_set(:@config, previous)
-    end
 end

@@ -3,12 +3,10 @@ import assert from "node:assert/strict";
 import { type ChildProcess, spawn } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { join } from "node:path";
 import { test } from "node:test";
 import { DbCredentialStore } from "../src/credentials.ts";
 import type { Db } from "../src/db/index.ts";
-import { openDatabase } from "../src/db/index.ts";
-import { ensurePostgresDatabase, openTestDatabase, TEST_DATABASE_URL, TEST_DIALECT, tempDir, testDatabaseUrl, until } from "./helpers.ts";
+import { emptyDatabaseUrl, openTestDatabase, TEST_DIALECT, testDatabaseUrl, until } from "./helpers.ts";
 
 const TOKEN = "process-test-token";
 const MAIN = new URL("../src/main.ts", import.meta.url).pathname;
@@ -259,22 +257,4 @@ async function removeFailure(db: Db): Promise<void> {
 			? "DROP TRIGGER IF EXISTS durable_agent_test_fail ON durable_agent_submissions"
 			: "DROP TRIGGER IF EXISTS durable_agent_test_fail",
 	);
-}
-
-async function emptyDatabaseUrl(): Promise<{ url: string; dispose(): Promise<void> }> {
-	if (TEST_DIALECT === "sqlite") return { url: `sqlite://${join(await tempDir(), "empty.sqlite3")}`, dispose: async () => {} };
-	const url = TEST_DATABASE_URL as string;
-	await ensurePostgresDatabase(url);
-	const schema = `empty_process_${process.pid}_${Date.now()}`;
-	const admin = await openDatabase(url);
-	await admin.exec(`CREATE SCHEMA ${schema}`);
-	const scoped = new URL(url);
-	scoped.searchParams.set("options", `-c search_path=${schema}`);
-	return {
-		url: scoped.toString(),
-		dispose: async () => {
-			await admin.exec(`DROP SCHEMA ${schema} CASCADE`);
-			await admin.close();
-		},
-	};
 }

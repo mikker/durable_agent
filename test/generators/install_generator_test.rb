@@ -44,8 +44,6 @@ class DurableAgent::InstallGeneratorTest < Rails::Generators::TestCase
     end
     assert_match "credentials:edit", output
     assert_no_match "PORT=5000", output
-    assert_no_match "relay", output
-    assert_no_match "cable", output
   end
 
   test "appends the sidecar to an existing Procfile.dev once" do

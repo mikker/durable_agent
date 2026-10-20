@@ -51,33 +51,6 @@ export function delegateStorage(inner: Storage): Omit<Storage, "commit"> {
 	return bound as unknown as Omit<Storage, "commit">;
 }
 
-/** Document id → owning conversation, read through to storage on a miss. `null` marks a session or task document. */
-export class DocumentConversations {
-	readonly #inner: Storage;
-	readonly #known = new Map<DocumentId, ConversationId | null>();
-
-	constructor(inner: Storage) {
-		this.#inner = inner;
-	}
-
-	remember(record: DocumentCreate | DocumentRecord): void {
-		this.#known.set(record.id, record.scope.kind === "conversation" ? record.scope.conversationId : null);
-	}
-
-	forget(id: DocumentId): void {
-		this.#known.delete(id);
-	}
-
-	async of(id: DocumentId, context: Context): Promise<ConversationId | undefined> {
-		const known = this.#known.get(id);
-		if (known !== undefined) return known ?? undefined;
-		const stored = await this.#inner.document(id, "current", context);
-		if (stored === undefined) return undefined;
-		this.remember(stored.record);
-		return this.#known.get(id) ?? undefined;
-	}
-}
-
 export type BaseDocumentStorage = Storage & {
 	/**
 	 * `commit`, also naming the conversations that own the batch's `document.change` and `document.retire` writes.
@@ -101,13 +74,22 @@ const rewriteAsBase = (write: DocumentChange, stored: StoredDocument | undefined
 };
 
 export function withBaseDocuments(inner: Storage): BaseDocumentStorage {
-	const conversations = new DocumentConversations(inner);
+	// Document id → owning conversation, filled by creates, copies and reads; `null` marks a session or task document.
+	const conversations = new Map<DocumentId, ConversationId | null>();
+	const remember = (record: DocumentCreate | DocumentRecord): void => {
+		conversations.set(record.id, record.scope.kind === "conversation" ? record.scope.conversationId : null);
+	};
 	// The read of the current value and the commit that replaces it must not interleave with another commit.
 	let queue: Promise<unknown> = Promise.resolve();
 
 	const ownerOf = async (id: DocumentId, context: Context): Promise<ConversationId | undefined> => {
 		try {
-			return await conversations.of(id, context);
+			if (!conversations.has(id)) {
+				const stored = await inner.document(id, "current", context);
+				if (stored === undefined) return undefined;
+				remember(stored.record);
+			}
+			return conversations.get(id) ?? undefined;
 		} catch (error) {
 			log.warn("could not read a document's conversation; no change event for it", { document: id, error });
 			return undefined;
@@ -118,11 +100,11 @@ export function withBaseDocuments(inner: Storage): BaseDocumentStorage {
 		const rewritten: StorageWrite[] = [];
 		const owners: ConversationId[] = [];
 		for (const write of writes) {
-			if (write.type === "document.create" || write.type === "document.copy") conversations.remember(write.record);
+			if (write.type === "document.create" || write.type === "document.copy") remember(write.record);
 			if (write.type === "document.change" && write.content.kind === "delta") {
 				// This read is the rewrite's, so it fails the commit: without the current value there is no base to write.
 				const stored = await inner.document(write.id, "current", context);
-				if (stored !== undefined) conversations.remember(stored.record);
+				if (stored !== undefined) remember(stored.record);
 				rewritten.push(rewriteAsBase(write, stored));
 			} else {
 				rewritten.push(write);
@@ -139,7 +121,7 @@ export function withBaseDocuments(inner: Storage): BaseDocumentStorage {
 		const run = queue.then(async () => {
 			const { rewritten, owners } = await prepare(writes, context);
 			const seq = await inner.commit(rewritten, context);
-			for (const write of writes) if (write.type === "document.retire") conversations.forget(write.id);
+			for (const write of writes) if (write.type === "document.retire") conversations.delete(write.id);
 			return { seq, owners };
 		});
 		queue = run.catch(() => undefined);

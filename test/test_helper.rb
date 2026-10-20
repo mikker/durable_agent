@@ -9,6 +9,13 @@ require "durable_agent/test_helper"
 
 Dir[File.expand_path("support/**/*.rb", __dir__)].each { |file| require file }
 
+# In fixtures: a value as the JSON text the sidecar stores, and a string as pi-durable indexes it, each quoted for YAML.
+module DurableAgent::FixtureHelpers
+  def json_text(value) = value.to_json.to_json
+  def indexed(value) = DurableAgent::IndexedString.encode(value).to_json
+end
+ActiveRecord::FixtureSet.context_class.include DurableAgent::FixtureHelpers
+
 module ActiveSupport
   class TestCase
     self.fixture_paths = [ File.expand_path("fixtures", __dir__) ]
@@ -17,6 +24,16 @@ module ActiveSupport
 
     include DurableAgent::TestHelper
     include Turbo::Broadcastable::TestHelper
+
+    private
+      # Runs the block with `config` as DurableAgent.config.
+      def with_config(config)
+        previous = DurableAgent.config
+        DurableAgent.instance_variable_set(:@config, config)
+        yield
+      ensure
+        DurableAgent.instance_variable_set(:@config, previous)
+      end
   end
 end
 

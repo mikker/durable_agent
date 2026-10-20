@@ -8,15 +8,15 @@ import { type BaseDocumentStorage, delegateStorage } from "./documents.ts";
 import { log } from "./log.ts";
 
 export const DEBOUNCE_MS = 100;
-export const RETRY_MS = 1_000;
+const RETRY_MS = 1_000;
 const POST_TIMEOUT_MS = 10_000;
 
-export type Timers = {
+type Timers = {
 	setTimeout(callback: () => void, ms: number): unknown;
 	clearTimeout(handle: unknown): void;
 };
 
-export type EventsOptions = {
+type EventsOptions = {
 	readonly railsUrl: string | undefined;
 	readonly token: string;
 	readonly fetch?: typeof fetch;
@@ -127,7 +127,7 @@ export class Events {
 	}
 }
 
-export type ChangeSink = Pick<Events, "changed">;
+type ChangeSink = Pick<Events, "changed">;
 
 /**
  * Wraps `commit` to announce the conversations each successful commit touched. Task writes are ignored. Owners are

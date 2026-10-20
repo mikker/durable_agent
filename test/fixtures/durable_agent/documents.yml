@@ -1,94 +1,75 @@
 # Columns as pi-durable's storage core writes them: `kind` and `key_value` JSON-encoded, `created_at` and
 # `retired_at` commit seqs, `record` the DocumentRecord. The values are in document_revisions.yml.
-<% json = ->(value) { value.to_json.to_json } %>
+<% record = ->(id, kind, owner, history, created_at: 1, **extra) {
+  json_text({ id: id, kind: kind, scope: { kind: "conversation", conversationId: owner }, history: history, fork: "copy",
+    createdAt: created_at, **extra }) } %>
+DEFAULTS: &DEFAULTS
+  family: 0
+  key_value: <%= indexed("") %>
+  scope_kind: conversation
+  created_at: 1
 
 idle_live:
+  <<: *DEFAULTS
   id: 900501
-  kind: <%= DurableAgent::IndexedString.encode("pi.live").to_json %>
-  family: 0
-  key_value: <%= DurableAgent::IndexedString.encode("").to_json %>
-  scope_kind: conversation
+  kind: <%= indexed("pi.live") %>
   owner_id: 900001
-  created_at: 1
-  record: <%= json.({ id: 900501, kind: "pi.live", scope: { kind: "conversation", conversationId: 900001 }, history: "latest", fork: "copy", createdAt: 1 }) %>
+  record: <%= record.(900501, "pi.live", 900001, "latest") %>
 
 idle_retired_inbox:
+  <<: *DEFAULTS
   id: 900502
-  kind: <%= DurableAgent::IndexedString.encode("pi.inbox").to_json %>
-  family: 0
-  key_value: <%= DurableAgent::IndexedString.encode("").to_json %>
-  scope_kind: conversation
+  kind: <%= indexed("pi.inbox") %>
   owner_id: 900001
-  created_at: 1
   retired_at: 3
-  record: <%= json.({ id: 900502, kind: "pi.inbox", scope: { kind: "conversation", conversationId: 900001 }, history: "latest", fork: "copy", createdAt: 1, retiredAt: 3 }) %>
+  record: <%= record.(900502, "pi.inbox", 900001, "latest", retiredAt: 3) %>
 
 failed_agent:
+  <<: *DEFAULTS
   id: 900506
-  kind: <%= DurableAgent::IndexedString.encode("pi.agent").to_json %>
-  family: 0
-  key_value: <%= DurableAgent::IndexedString.encode("").to_json %>
-  scope_kind: conversation
+  kind: <%= indexed("pi.agent") %>
   owner_id: 900003
-  created_at: 1
-  record: <%= json.({ id: 900506, kind: "pi.agent", scope: { kind: "conversation", conversationId: 900003 }, history: "rewindable", fork: "copy", createdAt: 1 }) %>
+  record: <%= record.(900506, "pi.agent", 900003, "rewindable") %>
 
 errored_agent:
+  <<: *DEFAULTS
   id: 900507
-  kind: <%= DurableAgent::IndexedString.encode("pi.agent").to_json %>
-  family: 0
-  key_value: <%= DurableAgent::IndexedString.encode("").to_json %>
-  scope_kind: conversation
+  kind: <%= indexed("pi.agent") %>
   owner_id: 900006
-  created_at: 1
-  record: <%= json.({ id: 900507, kind: "pi.agent", scope: { kind: "conversation", conversationId: 900006 }, history: "rewindable", fork: "copy", createdAt: 1 }) %>
+  record: <%= record.(900507, "pi.agent", 900006, "rewindable") %>
 
 idle_usage:
+  <<: *DEFAULTS
   id: 900508
-  kind: <%= DurableAgent::IndexedString.encode("pi.usage").to_json %>
-  family: 0
-  key_value: <%= DurableAgent::IndexedString.encode("").to_json %>
-  scope_kind: conversation
+  kind: <%= indexed("pi.usage") %>
   owner_id: 900001
-  created_at: 1
-  record: <%= json.({ id: 900508, kind: "pi.usage", scope: { kind: "conversation", conversationId: 900001 }, history: "latest", fork: "copy", createdAt: 1 }) %>
+  record: <%= record.(900508, "pi.usage", 900001, "latest") %>
 
 busy_live:
+  <<: *DEFAULTS
   id: 900503
-  kind: <%= DurableAgent::IndexedString.encode("pi.live").to_json %>
-  family: 0
-  key_value: <%= DurableAgent::IndexedString.encode("").to_json %>
-  scope_kind: conversation
+  kind: <%= indexed("pi.live") %>
   owner_id: 900002
-  created_at: 1
-  record: <%= json.({ id: 900503, kind: "pi.live", scope: { kind: "conversation", conversationId: 900002 }, history: "latest", fork: "copy", createdAt: 1 }) %>
+  record: <%= record.(900503, "pi.live", 900002, "latest") %>
 
 busy_inbox:
+  <<: *DEFAULTS
   id: 900504
-  kind: <%= DurableAgent::IndexedString.encode("pi.inbox").to_json %>
-  family: 0
-  key_value: <%= DurableAgent::IndexedString.encode("").to_json %>
-  scope_kind: conversation
+  kind: <%= indexed("pi.inbox") %>
   owner_id: 900002
-  created_at: 1
-  record: <%= json.({ id: 900504, kind: "pi.inbox", scope: { kind: "conversation", conversationId: 900002 }, history: "latest", fork: "copy", createdAt: 1 }) %>
+  record: <%= record.(900504, "pi.inbox", 900002, "latest") %>
 
 forked_notes:
+  <<: *DEFAULTS
   id: 900505
-  kind: <%= DurableAgent::IndexedString.encode("app.notes").to_json %>
-  family: 0
-  key_value: <%= DurableAgent::IndexedString.encode("").to_json %>
-  scope_kind: conversation
+  kind: <%= indexed("app.notes") %>
   owner_id: 900004
   created_at: 9
-  record: <%= json.({ id: 900505, kind: "app.notes", scope: { kind: "conversation", conversationId: 900004 }, history: "rewindable", fork: "copy", createdAt: 9 }) %>
+  record: <%= record.(900505, "app.notes", 900004, "rewindable", created_at: 9) %>
 
 on_account_agent:
+  <<: *DEFAULTS
   id: 900510
-  kind: <%= DurableAgent::IndexedString.encode("pi.agent").to_json %>
-  family: 0
-  key_value: <%= DurableAgent::IndexedString.encode("").to_json %>
-  scope_kind: conversation
+  kind: <%= indexed("pi.agent") %>
   owner_id: 900007
-  created_at: 1
-  record: <%= json.({ id: 900510, kind: "pi.agent", scope: { kind: "conversation", conversationId: 900007 }, history: "rewindable", fork: "copy", createdAt: 1 }) %>
+  record: <%= record.(900510, "pi.agent", 900007, "rewindable") %>

@@ -16,13 +16,10 @@ class DurableAgent::Connection
   attr_reader :provider, :account, :error
 
   def self.all(account: nil)
-    statuses = begin
-      DurableAgent.auth(account: account)
-    rescue DurableAgent::Error => error
-      return PROVIDERS.keys.map { |provider| new(provider, account: account, status: nil, error: error.message) }
-    end
-
+    statuses = DurableAgent.auth(account: account)
     PROVIDERS.keys.map { |provider| new(provider, account: account, status: statuses[provider]) }
+  rescue DurableAgent::Error => error
+    PROVIDERS.keys.map { |provider| new(provider, account: account, status: nil, error: error.message) }
   end
 
   def initialize(provider, account: nil, status: :unknown, error: nil)

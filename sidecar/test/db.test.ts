@@ -341,9 +341,9 @@ function holdWriteLock(path: string, ms: number): Promise<void> {
 	});
 }
 
-async function sqliteFile(options: { busyBudgetMs?: number } = {}): Promise<{ db: Db; path: string }> {
+async function sqliteFile(busyBudgetMs?: number): Promise<{ db: Db; path: string }> {
 	const path = join(await tempDir(), "busy.sqlite3");
-	const file = await openSqliteDatabase(path, options);
+	const file = await openSqliteDatabase(path, busyBudgetMs);
 	await file.exec("CREATE TABLE t (v text NOT NULL)");
 	return { db: file, path };
 }
@@ -391,7 +391,7 @@ test("[sqlite] a statement outside a transaction waits for another writer's lock
 });
 
 test("[sqlite] a lock held past the busy budget rejects with a clear error", { skip: TEST_DIALECT !== "sqlite" }, async () => {
-	const { db: file, path } = await sqliteFile({ busyBudgetMs: 300 });
+	const { db: file, path } = await sqliteFile(300);
 	const held = holdWriteLock(path, 1_500);
 	let calls = 0;
 	await assert.rejects(

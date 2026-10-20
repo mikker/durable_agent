@@ -1,4 +1,3 @@
-<% json = ->(value) { value.to_json.to_json } %>
 faulted:
   id: 900701
   type: task_faulted
@@ -6,12 +5,12 @@ faulted:
   task_id: 900603
   task_kind: pi.run
   message: "The run faulted"
-  info: <%= json.({ error: "boom" }) %>
+  info: <%= json_text({ error: "boom" }) %>
   created_at: <%= 1.minute.ago.to_fs(:db) %>
 
 session:
   id: 900702
   type: session_failed
   message: "The session failed"
-  info: <%= json.({}) %>
+  info: <%= json_text({}) %>
   created_at: <%= 2.minutes.ago.to_fs(:db) %>

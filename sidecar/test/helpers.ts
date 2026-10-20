@@ -12,7 +12,7 @@ export const TEST_DATABASE_URL = process.env.DURABLE_AGENT_TEST_DATABASE_URL || 
 /** The dialect the suite runs on. */
 export const TEST_DIALECT: Dialect = TEST_DATABASE_URL === undefined ? "sqlite" : (dialectOf(TEST_DATABASE_URL) ?? "sqlite");
 
-export const TABLES = [
+const TABLES = [
 	"durable_agent_durable_schema",
 	"durable_agent_durable_metadata",
 	"durable_agent_record_ids",
@@ -68,12 +68,9 @@ async function dropTables(db: Db): Promise<void> {
 	for (const { name } of rows) await db.exec(`DROP TABLE IF EXISTS "${name}"${db.dialect === "postgres" ? " CASCADE" : ""}`);
 }
 
-/** A test database without any durable_agent table: a fresh SQLite file, or a Postgres schema of its own. */
-export async function openEmptyDatabase(): Promise<{ db: Db; dispose(): Promise<void> }> {
-	if (TEST_DIALECT === "sqlite") {
-		const db = await openDatabase(`sqlite://${join(await tempDir(), "empty.sqlite3")}`);
-		return { db, dispose: () => db.close() };
-	}
+/** A database URL without any durable_agent table: a fresh SQLite file, or a Postgres schema of its own. */
+export async function emptyDatabaseUrl(): Promise<{ url: string; dispose(): Promise<void> }> {
+	if (TEST_DIALECT === "sqlite") return { url: `sqlite://${join(await tempDir(), "empty.sqlite3")}`, dispose: async () => {} };
 	const url = TEST_DATABASE_URL as string;
 	await ensurePostgresDatabase(url);
 	const schema = `empty_${process.pid}_${Date.now()}`;
@@ -81,23 +78,21 @@ export async function openEmptyDatabase(): Promise<{ db: Db; dispose(): Promise<
 	await admin.exec(`CREATE SCHEMA ${schema}`);
 	const scoped = new URL(url);
 	scoped.searchParams.set("options", `-c search_path=${schema}`);
-	const db = await openDatabase(scoped.toString());
 	return {
-		db,
+		url: scoped.toString(),
 		dispose: async () => {
-			await db.close();
 			await admin.exec(`DROP SCHEMA ${schema} CASCADE`);
 			await admin.close();
 		},
 	};
 }
 
-export async function applySchema(db: Db): Promise<void> {
+async function applySchema(db: Db): Promise<void> {
 	await db.exec(await readFile(new URL(`../sql/schema.${db.dialect}.sql`, import.meta.url), "utf8"));
 }
 
 /** Empty every durable_agent table; each test Harness numbers its records from 1 again. */
-export async function resetTables(db: Db): Promise<void> {
+async function resetTables(db: Db): Promise<void> {
 	if (db.dialect === "postgres") {
 		await db.exec(`TRUNCATE ${TABLES.join(", ")} RESTART IDENTITY`);
 		return;
@@ -111,7 +106,7 @@ export async function resetTables(db: Db): Promise<void> {
 const ensured = new Map<string, Promise<void>>();
 
 /** Create the Postgres database the URL names when it is missing, through the `postgres` maintenance database. */
-export function ensurePostgresDatabase(url: string): Promise<void> {
+function ensurePostgresDatabase(url: string): Promise<void> {
 	let done = ensured.get(url);
 	if (done === undefined) {
 		done = createIfMissing(url);

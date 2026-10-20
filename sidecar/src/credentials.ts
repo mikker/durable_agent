@@ -12,7 +12,7 @@ import { log } from "./log.ts";
 
 type Envelope = { enc: 1; type: Credential["type"]; iv: string; tag: string; data: string };
 type Stored = Envelope | Credential;
-type Loaded = { credential: Credential | undefined; legacy: boolean };
+type Loaded = { credential: Credential | undefined; plaintext: boolean };
 
 const isEnvelope = (stored: Stored): stored is Envelope => (stored as Partial<Envelope>).enc === 1;
 
@@ -76,9 +76,9 @@ export class DbCredentialStore implements CredentialStore {
 			providerId,
 		);
 		const stored = row === undefined ? undefined : parseStored(providerId, row.credential);
-		if (stored === undefined) return { credential: undefined, legacy: false };
-		if (isEnvelope(stored)) return { credential: this.#decrypt(providerId, stored), legacy: false };
-		return { credential: stored, legacy: true };
+		if (stored === undefined) return { credential: undefined, plaintext: false };
+		if (isEnvelope(stored)) return { credential: this.#decrypt(providerId, stored), plaintext: false };
+		return { credential: stored, plaintext: true };
 	}
 
 	#serialize<T>(providerId: string, task: () => Promise<T>, options?: AuthOperationOptions): Promise<T> {
@@ -120,11 +120,11 @@ export class DbCredentialStore implements CredentialStore {
 		return this.#serialize(
 			providerId,
 			async () => {
-				const { credential: current, legacy } = await this.#load(providerId);
+				const { credential: current, plaintext } = await this.#load(providerId);
 				const next = await fn(current);
 				options?.signal?.throwIfAborted();
-				// A plaintext row from before encryption is rewritten even when fn keeps it.
-				const write = next ?? (legacy ? current : undefined);
+				// A plaintext row is rewritten encrypted even when fn keeps it.
+				const write = next ?? (plaintext ? current : undefined);
 				if (write !== undefined) {
 					await this.#db.run(
 						`INSERT INTO durable_agent_credentials (provider_id, credential, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)

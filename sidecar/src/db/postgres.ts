@@ -23,7 +23,7 @@ export async function openPostgresDatabase(url: string): Promise<Db> {
 
 // `CURRENT_TIMESTAMP` lands in `timestamp without time zone` columns, which Rails reads as UTC. Set as a startup
 // option (appended to any `options` the URL carries) so it holds on every pooled connection from the start.
-export function inUtc(url: string): string {
+function inUtc(url: string): string {
 	const parsed = new URL(url);
 	const options = [parsed.searchParams.get("options"), "-c TimeZone=UTC"].filter(Boolean).join(" ");
 	parsed.searchParams.set("options", options);

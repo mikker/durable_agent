@@ -6,11 +6,10 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, before, test } from "node:test";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import type { CredentialStore } from "@earendil-works/pi-ai";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { createRegistry } from "@earendil-works/pi-durable";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
-import { DbCredentialStore } from "../src/credentials.ts";
-import type { Db } from "../src/db/index.ts";
 import { RailsTools, type ToolDefinition } from "../src/tools.ts";
 import { testDatabaseUrl, until } from "./helpers.ts";
 import { bootTestSidecar, type TestSidecar } from "./sidecar.ts";
@@ -67,8 +66,8 @@ before(async () => {
 
 	sidecar = await bootTestSidecar({
 		config: { token: TOKEN, railsUrl },
-		models: (db) => {
-			const models = createModels({ credentials: new DbCredentialStore(db, "t") });
+		models: (credentials) => {
+			const models = createModels({ credentials });
 			const faux = fauxProvider({ tokensPerSecond: 1000 });
 			models.setProvider(faux.provider);
 			faux.setResponses([
@@ -92,7 +91,7 @@ after(async () => {
 });
 
 test("a scripted tool call runs through Rails over HTTP and its result is stored", async () => {
-	const { harness, model } = sidecar.opened;
+	const { harness, config: { model } } = sidecar;
 	const conversation = await harness.createConversation({ ownership: { kind: "ownerless" }, agent: { model } }, context);
 	const submission = await conversation.submit({ type: "input", content: "What does INV-1042 total?", requestId: "tools-1" }, context);
 	const settled = await submission.wait(context);
@@ -232,8 +231,8 @@ const restartRails = async () => {
 	return { state, url, close: () => new Promise((resolve) => server.close(resolve)) };
 };
 
-const scripted = (...messages: ReturnType<typeof fauxAssistantMessage>[]) => (db: Db) => {
-	const models = createModels({ credentials: new DbCredentialStore(db, "t") });
+const scripted = (...messages: ReturnType<typeof fauxAssistantMessage>[]) => (credentials: CredentialStore) => {
+	const models = createModels({ credentials });
 	const faux = fauxProvider({ tokensPerSecond: 1000 });
 	models.setProvider(faux.provider);
 	faux.setResponses(messages);
@@ -249,7 +248,7 @@ test("a replay-safe tool call interrupted by a restart runs again once the tools
 			config: { token: TOKEN, railsUrl: fake.url },
 			models: scripted(fauxAssistantMessage([fauxToolCall("slow_count", {}, { id: "call-slow" })], { stopReason: "toolUse" })),
 		});
-		const { harness, model } = first.opened;
+		const { harness, config: { model } } = first;
 		const conversation = await harness.createConversation({ ownership: { kind: "ownerless" }, agent: { model } }, context);
 		const submission = await conversation.submit({ type: "input", content: "Count", requestId: "restart-1" }, context);
 		await until("the tool call to reach Rails", () => fake.state.called);
@@ -265,7 +264,7 @@ test("a replay-safe tool call interrupted by a restart runs again once the tools
 			models: scripted(fauxAssistantMessage([fauxText("It counted to 42.")])),
 		});
 		try {
-			const settled = await (await second.opened.harness.submission(submission.id, context))?.wait(context);
+			const settled = await (await second.harness.submission(submission.id, context))?.wait(context);
 			assert.equal(settled?.status, "done");
 			assert.equal(fake.state.calls, 2, "the call ran again after the restart");
 

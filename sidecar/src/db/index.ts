@@ -10,16 +10,18 @@ export interface Db extends SqliteDatabase {
 	readonly dialect: Dialect;
 }
 
+const POSTGRES_URL = /^postgres(ql)?:/i;
+
 /** `postgres://…` / `postgresql://…`, or `sqlite:///abs/path`, `sqlite3:///abs/path`, `sqlite:relative/path`, `:memory:`. */
 export async function openDatabase(url: string): Promise<Db> {
-	if (/^postgres(ql)?:/i.test(url)) return openPostgresDatabase(url);
+	if (POSTGRES_URL.test(url)) return openPostgresDatabase(url);
 	const path = sqlitePath(url);
 	if (path !== undefined) return openSqliteDatabase(path);
 	throw new Error(`DATABASE_URL must be a postgres:// or sqlite:// URL, got ${JSON.stringify(redact(url))}`);
 }
 
 export function dialectOf(url: string): Dialect | undefined {
-	if (/^postgres(ql)?:/i.test(url)) return "postgres";
+	if (POSTGRES_URL.test(url)) return "postgres";
 	return sqlitePath(url) === undefined ? undefined : "sqlite";
 }
 

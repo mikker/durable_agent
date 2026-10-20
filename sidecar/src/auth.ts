@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import type { AuthEvent, AuthPrompt, Models } from "@earendil-works/pi-ai";
 import { log } from "./log.ts";
 
-export type LoginStatus = "starting" | "awaiting_browser" | "exchanging" | "done" | "failed";
+type LoginStatus = "starting" | "awaiting_browser" | "exchanging" | "done" | "failed";
 
 export type Login = {
 	readonly id: string;
@@ -25,32 +25,24 @@ type Pending = {
 	readonly login: Login;
 	readonly abort: AbortController;
 	resolveManual?: (input: string) => void;
-	rejectManual?: (error: Error) => void;
 };
 
 export class Logins {
 	readonly #models: Models;
-	readonly #deviceId: () => string;
+	readonly #deviceId: string;
 	readonly #agentName: string;
 	readonly #pending = new Map<string, Pending>();
 	readonly #changed: (provider: string) => void;
 
-	/** `changed` hears of every completed sign-in and every sign-out (main.ts posts it to Rails as an auth event). */
-	constructor(models: Models, deviceId: () => string, agentName: string, changed: (provider: string) => void = () => {}) {
+	/**
+	 * `deviceId` is the installation's. `changed` hears of every completed sign-in and every sign-out, which reach Rails
+	 * as auth events.
+	 */
+	constructor(models: Models, deviceId: string, agentName: string, changed: (provider: string) => void = () => {}) {
 		this.#models = models;
 		this.#deviceId = deviceId;
 		this.#agentName = agentName;
 		this.#changed = changed;
-	}
-
-	/** Every provider's connection state, account providers (`openai@u42`) included: `null` without credentials. */
-	async status(): Promise<Record<string, { type: "api_key" | "oauth"; source?: string } | null>> {
-		const result: Record<string, { type: "api_key" | "oauth"; source?: string } | null> = {};
-		for (const provider of this.#models.getProviders()) {
-			const check = await this.#models.checkAuth(provider.id).catch(() => undefined);
-			result[provider.id] = check === undefined ? null : { type: check.type, source: check.source };
-		}
-		return result;
 	}
 
 	/** Start a login and resolve once the flow has something to show the user. One login per provider at a time. */
@@ -98,13 +90,12 @@ export class Logins {
 			}
 			return new Promise<string>((resolve, reject) => {
 				pending.resolveManual = resolve;
-				pending.rejectManual = reject;
 				request.signal?.addEventListener("abort", () => reject(new Error("login cancelled")), { once: true });
 			});
 		};
 
 		void this.#models
-			.login(provider, "oauth", { signal: abort.signal, notify, prompt }, { getDeviceId: this.#deviceId, agentName: this.#agentName })
+			.login(provider, "oauth", { signal: abort.signal, notify, prompt }, { getDeviceId: () => this.#deviceId, agentName: this.#agentName })
 			.then(() => {
 				login.status = "done";
 				log.info("provider connected", { provider });

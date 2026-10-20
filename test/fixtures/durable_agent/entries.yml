@@ -1,12 +1,11 @@
 # `record` is pi-durable's EntryRecord as JSON text; kind, model and data live only there.
-<% json = ->(value) { value.to_json.to_json } %>
 system:
   id: 900100
   conversation_id: 900001
   head: 900100
   commit_seq: 1
   created_at: <%= 5.hours.ago.to_fs(:db) %>
-  record: <%= json.({ id: 900100, conversationId: 900001, kind: "pi.system", head: 900100,
+  record: <%= json_text({ id: 900100, conversationId: 900001, kind: "pi.system", head: 900100,
     model: [ { role: "system", content: "You are the assistant." } ] }) %>
 
 question:
@@ -14,7 +13,7 @@ question:
   conversation_id: 900001
   commit_seq: 2
   created_at: <%= 4.hours.ago.to_fs(:db) %>
-  record: <%= json.({ id: 900101, conversationId: 900001, kind: "pi.user",
+  record: <%= json_text({ id: 900101, conversationId: 900001, kind: "pi.user",
     model: [ { role: "user", content: "What is invoice INV-1?" } ] }) %>
 
 answer_with_tool:
@@ -22,7 +21,7 @@ answer_with_tool:
   conversation_id: 900001
   commit_seq: 3
   created_at: <%= 3.hours.ago.to_fs(:db) %>
-  record: <%= json.({ id: 900102, conversationId: 900001, kind: "pi.assistant", byTaskId: 900600,
+  record: <%= json_text({ id: 900102, conversationId: 900001, kind: "pi.assistant", byTaskId: 900600,
     model: [ { role: "assistant", content: [
       { type: "thinking", thinking: "Look it up." },
       { type: "text", text: "Let me look." },
@@ -33,7 +32,7 @@ tool_result:
   conversation_id: 900001
   commit_seq: 4
   created_at: <%= 2.hours.ago.to_fs(:db) %>
-  record: <%= json.({ id: 900103, conversationId: 900001, kind: "pi.tool-result",
+  record: <%= json_text({ id: 900103, conversationId: 900001, kind: "pi.tool-result",
     model: [ { role: "toolResult", toolCallId: "call-1", toolName: "lookup_invoice", isError: false,
       content: [ { type: "text", text: '{"number":"INV-1","total":42}' } ] } ] }) %>
 
@@ -42,7 +41,7 @@ answer:
   conversation_id: 900001
   commit_seq: 5
   created_at: <%= 1.hour.ago.to_fs(:db) %>
-  record: <%= json.({ id: 900104, conversationId: 900001, kind: "pi.assistant", data: { usage: { total: 12 } },
+  record: <%= json_text({ id: 900104, conversationId: 900001, kind: "pi.assistant", data: { usage: { total: 12 } },
     model: [ { role: "assistant", content: [ { type: "text", text: "INV-1 totals 42." } ], api: "openai-responses",
       provider: "openai", model: "gpt-6.1-sol", stopReason: "stop", durationMs: 2345, timestamp: 1792477600000,
       usage: { input: 1000, output: 300, cacheRead: 0, cacheWrite: 0, totalTokens: 1300,
@@ -53,7 +52,7 @@ errored_question:
   conversation_id: 900006
   commit_seq: 11
   created_at: <%= 3.days.ago.to_fs(:db) %>
-  record: <%= json.({ id: 900310, conversationId: 900006, kind: "pi.user",
+  record: <%= json_text({ id: 900310, conversationId: 900006, kind: "pi.user",
     model: [ { role: "user", content: "you up?", timestamp: 1792477617373 } ] }) %>
 
 errored_answer:
@@ -61,7 +60,7 @@ errored_answer:
   conversation_id: 900006
   commit_seq: 12
   created_at: <%= 3.days.ago.to_fs(:db) %>
-  record: <%= json.({ id: 900311, conversationId: 900006, kind: "pi.assistant",
+  record: <%= json_text({ id: 900311, conversationId: 900006, kind: "pi.assistant",
     model: [ { role: "assistant", content: [], api: "openai-responses", provider: "openai", model: "gpt-6.1-sol",
       usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
       stopReason: "error", errorMessage: "OAuth refresh failed for openai: OpenAI OAuth token request failed (400): {\n  \"error\": \"invalid_grant\"\n}",
@@ -71,16 +70,16 @@ busy_question:
   id: 900201
   conversation_id: 900002
   commit_seq: 6
-  record: <%= json.({ id: 900201, conversationId: 900002, kind: "pi.user", model: [ { role: "user", content: "Write me a poem" } ] }) %>
+  record: <%= json_text({ id: 900201, conversationId: 900002, kind: "pi.user", model: [ { role: "user", content: "Write me a poem" } ] }) %>
 
 failed_answer:
   id: 900301
   conversation_id: 900003
   commit_seq: 7
-  record: <%= json.({ id: 900301, conversationId: 900003, kind: "pi.assistant", model: [ { role: "assistant", content: "Earlier answer." } ] }) %>
+  record: <%= json_text({ id: 900301, conversationId: 900003, kind: "pi.assistant", model: [ { role: "assistant", content: "Earlier answer." } ] }) %>
 
 failed_question:
   id: 900302
   conversation_id: 900003
   commit_seq: 8
-  record: <%= json.({ id: 900302, conversationId: 900003, kind: "pi.user", model: [ { role: "user", content: "Are you there?" } ] }) %>
+  record: <%= json_text({ id: 900302, conversationId: 900003, kind: "pi.user", model: [ { role: "user", content: "Are you there?" } ] }) %>

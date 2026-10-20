@@ -6,10 +6,10 @@ import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai/provid
 import { createRegistry, Harness } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { CURRENT_SQLITE_SCHEMA_VERSION } from "@earendil-works/pi-durable/storage/sqlite";
-import type { Db } from "../src/db/index.ts";
+import { type Db, openDatabase } from "../src/db/index.ts";
 import { readHarnessSchemaVersion } from "../src/settings.ts";
 import { MissingSchema, openHarnessStorage } from "../src/storage.ts";
-import { openEmptyDatabase, openTestDatabase, TEST_DIALECT, tempDir, testDatabaseUrl } from "./helpers.ts";
+import { emptyDatabaseUrl, openTestDatabase, TEST_DIALECT, tempDir, testDatabaseUrl } from "./helpers.ts";
 
 const singletons = async (db: Db) => ({
 	schema: { ...(await db.get("SELECT singleton, version FROM durable_agent_durable_schema")) },
@@ -20,14 +20,16 @@ const singletons = async (db: Db) => ({
 });
 
 test(`[${TEST_DIALECT}] a database without the tables is refused with MissingSchema`, async () => {
-	const empty = await openEmptyDatabase();
+	const empty = await emptyDatabaseUrl();
+	const db = await openDatabase(empty.url);
 	try {
-		await assert.rejects(openHarnessStorage(empty.db), (error: Error) => {
+		await assert.rejects(openHarnessStorage(db), (error: Error) => {
 			assert.ok(error instanceof MissingSchema);
 			assert.match(error.message, /run bin\/rails db:migrate/);
 			return true;
 		});
 	} finally {
+		await db.close();
 		await empty.dispose();
 	}
 });

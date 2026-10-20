@@ -14,18 +14,7 @@ let sidecar: TestSidecar;
 let app: ReturnType<typeof createServer>;
 
 const serverFor = (from: TestSidecar, overrides: Partial<ServerDeps> = {}) =>
-	createServer({
-		harness: from.opened.harness,
-		readiness: { resumed: true },
-		models: from.opened.models,
-		db: from.db,
-		logins: new Logins(from.opened.models, () => "device", "test"),
-		tools: from.opened.tools,
-		token: TOKEN,
-		defaultModel: from.opened.model,
-		context: BACKGROUND_CONTEXT,
-		...overrides,
-	});
+	createServer({ ...from, readiness: { resumed: true }, token: TOKEN, defaultModel: from.config.model, ...overrides });
 
 before(async () => {
 	sidecar = await bootTestSidecar({ config: { token: TOKEN } });
@@ -86,8 +75,6 @@ test("until boot has resumed, submissions and aborts are 503 and health says so"
 /** Models whose OAuth login shows a URL and then waits for the redirect URL or a cancel; enough for Logins. */
 const fakeLoginModels = (): Models =>
 	({
-		getProviders: () => [],
-		checkAuth: async () => undefined,
 		logout: async () => {},
 		login: (
 			_provider: string,
@@ -100,7 +87,7 @@ const fakeLoginModels = (): Models =>
 	}) as unknown as Models;
 
 test("login routes answer only for the provider the login belongs to", async () => {
-	const withLogins = serverFor(sidecar, { logins: new Logins(fakeLoginModels(), () => "device", "test") });
+	const withLogins = serverFor(sidecar, { logins: new Logins(fakeLoginModels(), "device", "test") });
 	const started = await call("POST", "/auth/openai/logins", undefined, TOKEN, withLogins);
 	assert.equal(started.status, 201);
 	const login = (await started.json()) as { id: string; provider: string; status: string; url: string };
@@ -186,7 +173,7 @@ test("tools reload without a Rails URL answers an empty list", async () => {
 const json = async <T>(response: Response): Promise<T> => (await response.json()) as T;
 
 const pinnedModel = async (id: number) => {
-	const found = await sidecar.opened.harness.conversation(id as ConversationId, BACKGROUND_CONTEXT);
+	const found = await sidecar.harness.conversation(id as ConversationId, BACKGROUND_CONTEXT);
 	assert.ok(found, `conversation ${id}`);
 	return (await found.agent(BACKGROUND_CONTEXT)).model;
 };
@@ -199,7 +186,7 @@ const credentialRows = async (): Promise<string[]> =>
 /** A server whose Logins share the sidecar's models and record every auth change. */
 const withAuthChanges = () => {
 	const changed: string[] = [];
-	const server = serverFor(sidecar, { logins: new Logins(sidecar.opened.models, () => "device", "test", (provider) => changed.push(provider)) });
+	const server = serverFor(sidecar, { logins: new Logins(sidecar.models, "device", "test", (provider) => changed.push(provider)) });
 	return { server, changed };
 };
 
@@ -258,7 +245,7 @@ test("an account's API key is stored for its provider, reported under the base n
 	assert.deepEqual(await stored.json(), { type: "api_key", source: "stored credential" });
 	assert.deepEqual(changed, ["openai@u42"]);
 	assert.deepEqual(await credentialRows(), ["openai@u42"]);
-	assert.deepEqual(await sidecar.opened.models.getAuth("openai@u42").then((auth) => auth?.auth.apiKey), "sk-test-u42");
+	assert.deepEqual(await sidecar.models.getAuth("openai@u42").then((auth) => auth?.auth.apiKey), "sk-test-u42");
 
 	const forAccount = await json<Record<string, unknown>>(await call("GET", "/auth?account=u42", undefined, TOKEN, server));
 	assert.deepEqual(forAccount.openai, { type: "api_key", source: "stored credential" });
@@ -292,12 +279,12 @@ test("signing an account out removes only that account's credential", async () =
 });
 
 test("a login started for an account carries the scoped provider and answers under the base provider", async () => {
-	const withLogins = serverFor(sidecar, { logins: new Logins(fakeLoginModels(), () => "device", "test") });
+	const withLogins = serverFor(sidecar, { logins: new Logins(fakeLoginModels(), "device", "test") });
 	const started = await call("POST", "/auth/openai/logins?account=u42", undefined, TOKEN, withLogins);
 	assert.equal(started.status, 201);
 	const login = await json<{ id: string; provider: string; status: string }>(started);
 	assert.deepEqual([login.provider, login.status], ["openai@u42", "awaiting_browser"]);
-	assert.ok(sidecar.opened.models.getProvider("openai@u42"), "the account provider is registered");
+	assert.ok(sidecar.models.getProvider("openai@u42"), "the account provider is registered");
 
 	assert.equal((await call("GET", `/auth/openai/logins/${login.id}`, undefined, TOKEN, withLogins)).status, 200);
 	assert.equal((await call("GET", `/auth/anthropic/logins/${login.id}`, undefined, TOKEN, withLogins)).status, 404);
@@ -310,7 +297,7 @@ test("a login started for an account carries the scoped provider and answers und
 
 /** Submit through the Harness and wait for the run to settle. */
 const answer = async (id: number, requestId: string) => {
-	const found = await sidecar.opened.harness.conversation(id as ConversationId, BACKGROUND_CONTEXT);
+	const found = await sidecar.harness.conversation(id as ConversationId, BACKGROUND_CONTEXT);
 	assert.ok(found);
 	const submission = await found.submit({ type: "input", content: "Hello", requestId }, BACKGROUND_CONTEXT);
 	return { found, settled: await submission.wait(BACKGROUND_CONTEXT) };

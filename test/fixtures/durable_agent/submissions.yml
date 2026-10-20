@@ -1,46 +1,45 @@
 # `request_id` is JSON-encoded, as pi-durable indexes it; `record` is the SubmissionRecord.
-<% json = ->(value) { value.to_json.to_json } %>
 answered:
   id: 900401
   conversation_id: 900001
-  request_id: <%= DurableAgent::IndexedString.encode("message-1").to_json %>
+  request_id: <%= indexed("message-1") %>
   status: done
-  record: <%= json.({ id: 900401, conversationId: 900001, requestId: "message-1", type: "input", status: "done",
+  record: <%= json_text({ id: 900401, conversationId: 900001, requestId: "message-1", type: "input", status: "done",
     entry: 900101, answer: 900104 }) %>
 
 placed:
   id: 900404
   conversation_id: 900002
-  request_id: <%= DurableAgent::IndexedString.encode("message-4").to_json %>
+  request_id: <%= indexed("message-4") %>
   status: placed
-  record: <%= json.({ id: 900404, conversationId: 900002, requestId: "message-4", type: "input", status: "placed", entry: 900201 }) %>
+  record: <%= json_text({ id: 900404, conversationId: 900002, requestId: "message-4", type: "input", status: "placed", entry: 900201 }) %>
 
 unanswered_before_answer:
   id: 900402
   conversation_id: 900003
-  request_id: <%= DurableAgent::IndexedString.encode("message-2").to_json %>
+  request_id: <%= indexed("message-2") %>
   status: unanswered
-  record: <%= json.({ id: 900402, conversationId: 900003, requestId: "message-2", type: "input", status: "unanswered",
+  record: <%= json_text({ id: 900402, conversationId: 900003, requestId: "message-2", type: "input", status: "unanswered",
     entry: 900300, reason: "run_failed", detail: { message: "429" } }) %>
 
 unanswered:
   id: 900403
   conversation_id: 900003
-  request_id: <%= DurableAgent::IndexedString.encode("message-3").to_json %>
+  request_id: <%= indexed("message-3") %>
   status: unanswered
-  record: <%= json.({ id: 900403, conversationId: 900003, requestId: "message-3", type: "input", status: "unanswered",
+  record: <%= json_text({ id: 900403, conversationId: 900003, requestId: "message-3", type: "input", status: "unanswered",
     entry: 900302, reason: "no_model" }) %>
 
 model_error:
   id: 900406
   conversation_id: 900006
-  request_id: <%= DurableAgent::IndexedString.encode("message-6").to_json %>
+  request_id: <%= indexed("message-6") %>
   status: unanswered
-  record: <%= json.({ id: 900406, conversationId: 900006, requestId: "message-6", type: "input", status: "unanswered",
+  record: <%= json_text({ id: 900406, conversationId: 900006, requestId: "message-6", type: "input", status: "unanswered",
     entry: 900310, reason: "model_error", detail: "OAuth refresh failed for openai: OpenAI OAuth token request failed (400): {\n  \"error\": \"invalid_grant\"\n}" }) %>
 
 owned_unanswered:
   id: 900405
   conversation_id: 900005
   status: unanswered
-  record: <%= json.({ id: 900405, conversationId: 900005, type: "input", status: "unanswered", reason: "aborted" }) %>
+  record: <%= json_text({ id: 900405, conversationId: 900005, type: "input", status: "unanswered", reason: "aborted" }) %>

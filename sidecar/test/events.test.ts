@@ -338,7 +338,7 @@ test("a completed login and a logout each announce the provider", async () => {
 		},
 		logout: async () => {},
 	} as unknown as Models;
-	const logins = new Logins(models, () => "device", "test", (provider) => announced.push(provider));
+	const logins = new Logins(models, "device", "test", (provider) => announced.push(provider));
 	const login = await logins.start("openai");
 	await until("the login to finish", () => login.status === "done");
 	assert.deepEqual(announced, ["openai"]);
@@ -349,7 +349,7 @@ test("a completed login and a logout each announce the provider", async () => {
 test("a real Harness run announces its conversation to Rails", async () => {
 	const sidecar = await bootTestSidecar({ config: { token: TOKEN, railsUrl } });
 	try {
-		const { harness, model } = sidecar.opened;
+		const { harness, config: { model } } = sidecar;
 		await sidecar.events.flush();
 		received.length = 0;
 		const conversation = await harness.createConversation({ ownership: { kind: "ownerless" }, agent: { model } }, context);

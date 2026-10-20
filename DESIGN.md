@@ -290,14 +290,16 @@ A non-2xx or network error is retried once after 1 s, then logged at `warn` and 
 state is in the database, and the next event or page load shows it. Unset `DURABLE_AGENT_RAILS_URL` disables
 events with one boot log line. `flush()` is awaited on shutdown, after the Harness has closed.
 
-### Boot and shutdown (`main.ts`)
+### Boot and shutdown (`main.ts`, `harness.ts`)
 
-Open the database from `DATABASE_URL` → check the gem schema version → credential store and models → account
-providers from the credentials table → device id → logins → Harness over `ChangeTracker(withBaseDocuments(openHarnessStorage(db)))` → ensure the root conversation →
-serve → load tools (awaited, with the bounded boot retry; a failure or an unset Rails URL falls through with no
-tools) → log "resuming with N tools" → `resume()`. Every step up to the root conversation runs inside one handler:
-a missing table at any of them (SQLite "no such table", Postgres `42P01`, also as a cause) is reported as
-`MissingSchema` ("run bin/rails db:migrate") and the process exits 1; any other boot error exits 1 too. Until
+Open the database from `DATABASE_URL` → `openSidecar(db, config)` (`harness.ts`): check the gem schema version →
+credential store and models → account providers from the credentials table → device id → logins → Harness over
+`ChangeTracker(withBaseDocuments(openHarnessStorage(db)))` → ensure the root conversation; then `main.ts` serves →
+load tools (awaited, with the bounded boot retry; a failure or an unset Rails URL falls through with no tools) →
+log "resuming with N tools" → `resume()`. The sidecar's tests boot through the same `openSidecar`. Every step of
+`openSidecar` runs inside one handler: a missing table at any of them (SQLite "no such table", Postgres `42P01`,
+also as a cause) is reported as `MissingSchema` ("run bin/rails db:migrate") and the process exits 1; any other
+boot error exits 1 too. Until
 `resume()` has run, `/health` reports `resumed: false` and submissions and aborts answer `503 {error: "starting"}`,
 because either would start pi-durable's scheduler before the tools are installed.
 
@@ -307,8 +309,8 @@ restarts the process; a clean close outside our own shutdown exits 1 as well. An
 exits 1. Unhandled rejections are logged, not fatal.
 
 Shutdown on SIGTERM or SIGINT: stop the server and wait up to 10 s for requests underway (then close their
-connections), dispose logins, await `reporter.settled()`, close the Harness (which commits nothing new and closes
-the database), flush events, exit 0. The whole shutdown has a 30 s deadline, after which the process logs and
+connections), then `sidecar.close()`: dispose logins, await `reporter.settled()`, close the Harness (which commits
+nothing new and closes the database), flush events; exit 0. The whole shutdown has a 30 s deadline, after which the process logs and
 exits 1; a second SIGTERM or SIGINT during shutdown exits 1 at once. A signal during the tool load stops it and
 the Harness is not resumed.
 

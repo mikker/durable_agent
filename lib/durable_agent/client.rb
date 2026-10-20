@@ -88,8 +88,11 @@ module DurableAgent
         end
 
         body = parse(response.body)
-        raise Unavailable.new(503, body, "sidecar is starting") if starting?(response, body)
-        raise ArgumentError, "invalid account" if invalid_account?(response, body)
+        error = body["error"] if body.is_a?(Hash)
+        # Until the harness has resumed (after tools load) the sidecar answers commands with 503 "starting".
+        raise Unavailable.new(503, body, "sidecar is starting") if response.code == "503" && error == "starting"
+        # Ruby validates accounts before sending them, so this is a programming error rather than a sidecar failure.
+        raise ArgumentError, "invalid account" if response.code == "422" && error == "invalid_account"
 
         case response
         when Net::HTTPSuccess then body || {}
@@ -98,16 +101,6 @@ module DurableAgent
         end
       rescue *UNREACHABLE => error
         raise Unavailable.new(nil, nil, "sidecar unreachable at #{url}: #{error.message}")
-      end
-
-      # Until the harness has resumed (after tools load) the sidecar answers commands with 503 "starting".
-      def starting?(response, body)
-        response.code == "503" && body.is_a?(Hash) && body["error"] == "starting"
-      end
-
-      # Ruby validates accounts before sending them, so this is a programming error rather than a sidecar failure.
-      def invalid_account?(response, body)
-        response.code == "422" && body.is_a?(Hash) && body["error"] == "invalid_account"
       end
 
       def parse(body)

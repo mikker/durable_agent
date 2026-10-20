@@ -1,5 +1,5 @@
-// Tools are Ruby classes; this sidecar only relays. At boot and on POST /tools/reload it fetches the definitions from
-// `GET {railsUrl}/durable_agent/tools`, and every call the model makes becomes
+// Tools are Ruby classes; the sidecar forwards calls to them. At boot and on POST /tools/reload it fetches the
+// definitions from `GET {railsUrl}/durable_agent/tools`, and every call the model makes becomes
 // `POST {railsUrl}/durable_agent/tools/:name`. The definitions live in one extension named "rails"; the registry's
 // `install()` replaces an installed extension of the same name in place, so a reload swaps the tool set atomically
 // and the next model request sees it.
@@ -16,8 +16,8 @@ import {
 } from "@earendil-works/pi-durable";
 import { log } from "./log.ts";
 
-export const RAILS_EXTENSION = "rails";
-export const TOOL_TIMEOUT_MS = 120_000;
+const RAILS_EXTENSION = "rails";
+const TOOL_TIMEOUT_MS = 120_000;
 const FETCH_TIMEOUT_MS = 10_000;
 
 export type ToolDefinition = {
@@ -27,12 +27,6 @@ export type ToolDefinition = {
 	readonly replay: "safe" | "unsafe";
 };
 
-/**
- * The definition's JSON Schema is used as the tool's `parameters` as is. No conversion is needed: TypeBox's `TSchema`
- * is an open interface, and pi-ai's `validateToolArguments` compiles plain JSON Schema (and coerces primitives for
- * schemas without a TypeBox kind). `Type.Unsafe()` would add a `~unsafe` key that is then sent to providers.
- */
-
 // Provider tool names: OpenAI and Anthropic both accept this alphabet and length.
 const TOOL_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
 
@@ -40,7 +34,7 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
 	typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** Keep the definitions that are well formed; log and drop the rest, so one bad Ruby class does not hide the others. */
-export function parseDefinitions(body: unknown): ToolDefinition[] {
+function parseDefinitions(body: unknown): ToolDefinition[] {
 	if (!Array.isArray(body)) throw new Error("expected a JSON array of tool definitions");
 	const definitions: ToolDefinition[] = [];
 	const seen = new Set<string>();
@@ -69,7 +63,7 @@ export function parseDefinitions(body: unknown): ToolDefinition[] {
 	return definitions;
 }
 
-export async function fetchDefinitions(railsUrl: string, token: string): Promise<ToolDefinition[]> {
+async function fetchDefinitions(railsUrl: string, token: string): Promise<ToolDefinition[]> {
 	const response = await fetch(new URL("/durable_agent/tools", railsUrl), {
 		headers: { authorization: `Bearer ${token}`, accept: "application/json" },
 		signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
@@ -90,11 +84,13 @@ const errorMessage = (error: unknown): string => {
 	return error.cause instanceof Error ? error.cause.message : error.message;
 };
 
-export function railsTool(definition: ToolDefinition, railsUrl: string, token: string): ToolRegistration {
+function railsTool(definition: ToolDefinition, railsUrl: string, token: string): ToolRegistration {
 	const url = new URL(`/durable_agent/tools/${encodeURIComponent(definition.name)}`, railsUrl);
 	return defineTool({
 		name: definition.name,
 		description: definition.description,
+		// The JSON Schema as is: TypeBox's `TSchema` is an open interface, and pi-ai's `validateToolArguments` compiles
+		// plain JSON Schema. `Type.Unsafe()` would add a `~unsafe` key that is then sent to providers.
 		parameters: definition.parameters satisfies TSchema,
 		replay: definition.replay,
 		execute: async (args, api, context) => {
@@ -131,7 +127,7 @@ export function railsTool(definition: ToolDefinition, railsUrl: string, token: s
 	});
 }
 
-export function railsExtension(definitions: readonly ToolDefinition[], railsUrl: string | undefined, token: string): Extension {
+function railsExtension(tools: readonly ToolRegistration[]): Extension {
 	return defineExtension({
 		name: RAILS_EXTENSION,
 		sections: [
@@ -141,7 +137,7 @@ export function railsExtension(definitions: readonly ToolDefinition[], railsUrl:
 				{ tag: false },
 			),
 		],
-		tools: railsUrl === undefined ? [] : definitions.map((definition) => railsTool(definition, railsUrl, token)),
+		tools,
 	});
 }
 
@@ -152,7 +148,7 @@ export type BootRetry = {
 };
 
 // `bin/dev` starts node before Puma listens, so the first fetches at boot are expected to fail.
-export const BOOT_RETRY: BootRetry = { initialMs: 500, maxMs: 10_000, totalMs: 60_000 };
+const BOOT_RETRY: BootRetry = { initialMs: 500, maxMs: 10_000, totalMs: 60_000 };
 
 /** Owns the "rails" extension in a registry: installs it once with no tools, then swaps in what Rails reports. */
 export class RailsTools {
@@ -169,14 +165,15 @@ export class RailsTools {
 		this.#railsUrl = railsUrl;
 		this.#token = token;
 		this.#retry = retry;
-		registry.install(railsExtension([], railsUrl, token));
+		registry.install(railsExtension([]));
 	}
 
 	/** Fetch and install. Throws when Rails cannot be asked; the installed tools stay as they were. */
 	async reload(): Promise<string[]> {
-		if (this.#railsUrl === undefined) return [];
-		const definitions = await fetchDefinitions(this.#railsUrl, this.#token);
-		this.#registry.install(railsExtension(definitions, this.#railsUrl, this.#token));
+		const railsUrl = this.#railsUrl;
+		if (railsUrl === undefined) return [];
+		const definitions = await fetchDefinitions(railsUrl, this.#token);
+		this.#registry.install(railsExtension(definitions.map((definition) => railsTool(definition, railsUrl, this.#token))));
 		this.#loaded = true;
 		const names = definitions.map((definition) => definition.name);
 		this.#names = names;

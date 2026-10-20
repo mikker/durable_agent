@@ -5,13 +5,20 @@ import type { Storage } from "@earendil-works/pi-durable";
 import { CURRENT_SQLITE_SCHEMA_VERSION, SqliteStorage } from "@earendil-works/pi-durable/storage/sqlite";
 import type { Db } from "./db/index.ts";
 
-export const TABLE_PREFIX = "durable_agent_";
+const TABLE_PREFIX = "durable_agent_";
 
 export class MissingSchema extends Error {
 	constructor(cause: unknown) {
 		super("the durable_agent tables are missing: run bin/rails db:migrate", { cause });
 		this.name = "MissingSchema";
 	}
+}
+
+/** SQLite's "no such table", Postgres' undefined_table, here or in a cause: the install migration has not run. */
+export function isMissingTable(error: unknown): boolean {
+	if (!(error instanceof Error)) return false;
+	if ((error as Error & { code?: unknown }).code === "42P01" || /no such table/i.test(error.message)) return true;
+	return isMissingTable(error.cause);
 }
 
 export async function openHarnessStorage(db: Db): Promise<Storage> {

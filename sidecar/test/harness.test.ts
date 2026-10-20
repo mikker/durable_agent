@@ -4,7 +4,6 @@ import { test } from "node:test";
 import type { CredentialStore } from "@earendil-works/pi-ai";
 import { createProcessModels } from "../src/harness.ts";
 import { assertKnownModel, UnknownModel } from "../src/models-check.ts";
-import { testConfig } from "./helpers.ts";
 
 const noCredentials: CredentialStore = {
 	get: async () => undefined,
@@ -13,9 +12,8 @@ const noCredentials: CredentialStore = {
 	list: async () => [],
 } as unknown as CredentialStore;
 
-test("faux/faux-1 is registered on a sidecar whose default is a real provider", async () => {
-	const config = await testConfig({ model: { provider: "openai", modelId: "gpt-6.1-sol" } });
-	const models = createProcessModels(config, noCredentials);
+test("every sidecar registers faux/faux-1 beside the real providers", () => {
+	const models = createProcessModels(noCredentials);
 
 	// A conversation started on faux keeps answering after DURABLE_AGENT_MODEL moves to openai.
 	assert.notEqual(models.getModel("faux", "faux-1"), undefined);

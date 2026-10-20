@@ -17,7 +17,6 @@ import type {
 import { MemoryStorage } from "@earendil-works/pi-durable/storage/memory";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai/providers/faux";
-import { DbCredentialStore } from "../src/credentials.ts";
 import { withBaseDocuments } from "../src/documents.ts";
 import { bootTestSidecar, type TestSidecar } from "./sidecar.ts";
 
@@ -175,8 +174,8 @@ const ANSWER = Array.from({ length: 60 }, (_, i) => `word${i}`).join(" ");
 
 before(async () => {
 	sidecar = await bootTestSidecar({
-		models: (db) => {
-			const models = createModels({ credentials: new DbCredentialStore(db, "t") });
+		models: (credentials) => {
+			const models = createModels({ credentials });
 			const faux = fauxProvider({ tokensPerSecond: 300 });
 			models.setProvider(faux.provider);
 			faux.setResponses([fauxAssistantMessage(ANSWER)]);
@@ -202,7 +201,7 @@ const liveRevisions = async (conversationId: number): Promise<Revision[] | undef
 };
 
 test("a streamed answer keeps pi.live at exactly one base revision, equal to the watched value", async () => {
-	const { harness, model } = sidecar.opened;
+	const { harness, config: { model } } = sidecar;
 	const conversation = await harness.createConversation({ ownership: { kind: "ownerless" }, agent: { model } }, context);
 	const submission = await conversation.submit({ type: "input", content: "Hello", requestId: "documents-1" }, context);
 

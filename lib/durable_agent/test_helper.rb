@@ -9,8 +9,9 @@ module DurableAgent
   #
   # `stub_sidecar` replaces DurableAgent.client calls with canned responses or callables and records each call.
   # It also seals the client: every other call raises DurableAgent::Unavailable, so a test never reaches a sidecar
-  # that happens to be running. `fake_sidecar` goes further for the three commands that write: like the real sidecar, it commits the
-  # conversation or submission row before it answers, so `DurableAgent.start` and `conversation.say` find them.
+  # that happens to be running. `fake_sidecar` goes further for the three commands that write: like the real sidecar,
+  # it commits the conversation or submission row before it answers, so `DurableAgent.start` and `conversation.say`
+  # find them.
   #
   #   fake_sidecar
   #   chat = Chat.create!                      # calls DurableAgent.start
@@ -29,11 +30,16 @@ module DurableAgent
     #   stub_sidecar(auth: CONNECTED, submit: ->(id, content, **) { { "id" => 1 } }, abort: DurableAgent::Unavailable)
     def stub_sidecar(**responses)
       client = DurableAgent.client
-      calls = sidecar_calls
+      responses.each_key { |name| raise ArgumentError, "DurableAgent::Client has no method #{name}" unless client.respond_to?(name) }
 
-      responses.each do |name, response|
-        raise ArgumentError, "DurableAgent::Client has no method #{name}" unless client.respond_to?(name)
-        (@sidecar_stubbed ||= []) << name
+      @sidecar_stubbed ||= []
+      sealed = (SIDECAR_CALLS - @sidecar_stubbed - responses.keys).index_with do |name|
+        ->(*, **) { raise DurableAgent::Unavailable.new(nil, nil, "DurableAgent.client.#{name} is not stubbed; stub_sidecar(#{name}: ...)") }
+      end
+
+      calls = sidecar_calls
+      responses.merge(sealed).each do |name, response|
+        @sidecar_stubbed << name
         client.define_singleton_method(name) do |*args, **kwargs|
           calls << [ name, args, kwargs ]
           if response.is_a?(Exception) || (response.is_a?(Class) && response < Exception)
@@ -41,14 +47,6 @@ module DurableAgent
           else
             response.respond_to?(:call) ? response.call(*args, **kwargs) : response
           end
-        end
-      end
-
-      (SIDECAR_CALLS - @sidecar_stubbed).each do |name|
-        @sidecar_stubbed << name
-        client.define_singleton_method(name) do |*args, **kwargs|
-          calls << [ name, args, kwargs ]
-          raise DurableAgent::Unavailable.new(nil, nil, "DurableAgent.client.#{name} is not stubbed; stub_sidecar(#{name}: ...)")
         end
       end
     end

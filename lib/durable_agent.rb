@@ -59,8 +59,7 @@ module DurableAgent
       DurableAgent::ApplicationRecord.connection_pool.clear_query_cache
     end
 
-    # The keyword arguments that scope a client call to an account: none for the app's own, so its calls stay as
-    # they were.
+    # The keyword arguments that scope a client call to an account: none for the app's own account.
     def account_scope(account)
       { account: Account.normalize(account) }.compact
     end

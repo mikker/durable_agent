@@ -25,15 +25,13 @@ By hand, from this directory: `cp .env.example .env`, edit, then `npm run dev` (
 | `DURABLE_AGENT_NAME` | agent name on provider consent screens | `durable_agent` |
 | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` | pass-through | |
 
-`DURABLE_AGENT_STORAGE_PATH` and `DURABLE_AGENT_MIRROR_DOCS` are gone: there is no separate harness file and no
-mirror.
-
 ### The process
 
-Boot (`src/main.ts`): check the gem schema version, register a provider for every account with a stored
-credential (`openai@u42`, see `src/accounts.ts` and DESIGN.md "Accounts"), open the Harness, ensure the root conversation, start the HTTP
-server, load the tool definitions from Rails (retrying for up to 60 s while Puma starts; with no Rails URL or after
-the retry gives up it runs with none), log `resuming with N tools`, then resume interrupted runs. Tools come first
+Boot: `openSidecar` (`src/harness.ts`, which the tests boot too) checks the gem schema version, registers a
+provider for every account with a stored credential (`openai@u42`, see `src/accounts.ts` and DESIGN.md
+"Accounts"), opens the Harness and ensures the root conversation; `src/main.ts` then starts the HTTP server,
+loads the tool definitions from Rails (retrying for up to 60 s while Puma starts; with no Rails URL or after the
+retry gives up it runs with none), logs `resuming with N tools`, then resumes interrupted runs. Tools come first
 because pi-durable re-runs an interrupted `replay: "safe"` call only when the tool is registered at that moment.
 Until the resume, `GET /health` says `resumed: false` and submissions and aborts answer `503 {error: "starting"}`.
 `/health` also lists the installed `tools`.
@@ -110,7 +108,7 @@ Rails owns it: the gem's install migration (`lib/generators/durable_agent/instal
 creates every table on either adapter. The sidecar never runs schema changes. `openHarnessStorage(db)` (`src/storage.ts`):
 
 1. checks that `durable_agent_conversations` exists and otherwise throws `MissingSchema` ("run bin/rails db:migrate");
-   `main.ts` reports a missing table from any other boot step the same way;
+   `openSidecar` reports a missing table from any other boot step the same way;
 2. seeds the two singleton rows the migration leaves out, so a database loaded from `schema.rb` works:
    `durable_agent_durable_schema (1, CURRENT_SQLITE_SCHEMA_VERSION)` and
    `durable_agent_durable_metadata (1, next_id '2', next_seq 1)`, both `ON CONFLICT DO NOTHING`;

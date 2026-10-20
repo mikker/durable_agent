@@ -1,79 +1,23 @@
-// A sidecar wired as main.ts wires it, over the test database, without the HTTP listener: open, root, tools, resume.
-import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import type { MutableModels } from "@earendil-works/pi-ai";
-import { registerStoredAccounts } from "../src/accounts.ts";
+// The sidecar as main.ts boots it, over the test database, without the HTTP listener: open, load tools, resume.
 import type { Config } from "../src/config.ts";
-import { DbCredentialStore } from "../src/credentials.ts";
 import type { Db } from "../src/db/index.ts";
-import { Events, type EventsOptions } from "../src/events.ts";
-import { createProcessModels, type OpenedHarness, openHarness } from "../src/harness.ts";
-import { createReporter, type Reporter } from "../src/reports.ts";
-import { checkSchemaVersion } from "../src/settings.ts";
-import type { BootRetry } from "../src/tools.ts";
+import { openSidecar, type Sidecar, type SidecarOptions } from "../src/harness.ts";
 import { openTestDatabase, testConfig } from "./helpers.ts";
 
-export type TestSidecarOptions = {
+export type TestSidecarOptions = SidecarOptions & {
 	readonly config?: Partial<Config>;
-	/** Defaults to the process models for the config (faux). */
-	readonly models?: (db: Db) => MutableModels;
-	readonly fetch?: EventsOptions["fetch"];
-	readonly toolsRetry?: BootRetry;
 	/** Open this database again (from testDatabaseUrl()) without emptying it, as a restarted process would. */
 	readonly databaseUrl?: string;
 	readonly reset?: boolean;
 };
 
-export type TestSidecar = {
-	readonly db: Db;
-	readonly config: Config;
-	readonly opened: OpenedHarness;
-	readonly events: Events;
-	readonly reporter: Reporter;
-	close(): Promise<void>;
-};
+export type TestSidecar = Sidecar & { readonly db: Db; readonly config: Config };
 
-export async function bootTestSidecar(options: TestSidecarOptions = {}): Promise<TestSidecar> {
-	const context = BACKGROUND_CONTEXT;
-	const db = await openTestDatabase({
-		...(options.databaseUrl === undefined ? {} : { url: options.databaseUrl }),
-		...(options.reset === undefined ? {} : { reset: options.reset }),
-	});
-	const config = await testConfig(options.config);
-	await checkSchemaVersion(db);
-	const credentials = new DbCredentialStore(db, config.token);
-	const models = options.models?.(db) ?? createProcessModels(config, credentials);
-	await registerStoredAccounts(models, credentials);
-	const events = new Events({
-		railsUrl: config.railsUrl,
-		token: config.token,
-		...(options.fetch === undefined ? {} : { fetch: options.fetch }),
-	});
-	const reporter = createReporter(db, events);
-	const opened = await openHarness(
-		config,
-		models,
-		{
-			db,
-			events,
-			onReport: reporter,
-			...(options.toolsRetry === undefined ? {} : { toolsRetry: options.toolsRetry }),
-		},
-		context,
-	);
-	await opened.harness.root(context, { agent: { model: opened.model } });
-	await opened.tools.load();
-	opened.harness.resume();
-	return {
-		db,
-		config,
-		opened,
-		events,
-		reporter,
-		close: async () => {
-			await reporter.settled();
-			await opened.close(context);
-			await events.flush();
-			await db.close();
-		},
-	};
+export async function bootTestSidecar({ config: overrides, databaseUrl, reset, ...options }: TestSidecarOptions = {}): Promise<TestSidecar> {
+	const db = await openTestDatabase({ url: databaseUrl, reset });
+	const config = await testConfig(overrides);
+	const sidecar = await openSidecar(db, config, options);
+	await sidecar.tools.load();
+	sidecar.harness.resume();
+	return { ...sidecar, db, config };
 }

@@ -17,8 +17,7 @@ test("the environment maps onto the config, with the documented defaults", () =>
 	assert.equal(config.host, "127.0.0.1");
 	assert.equal(config.railsUrl, undefined);
 	assert.equal(config.databaseUrl, "postgres://localhost/x");
-	assert.equal("storagePath" in config, false);
-	assert.equal("mirrorDocs" in config, false);
+	assert.deepEqual(Object.keys(config).sort(), ["agentName", "databaseUrl", "host", "model", "port", "railsUrl", "token", "workspaceRoot"]);
 
 	const custom = loadConfig({
 		DATABASE_URL: "postgres://localhost/x",

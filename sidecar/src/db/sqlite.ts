@@ -28,7 +28,7 @@ export function sqlitePath(url: string): string | undefined {
 }
 
 /** How long node:sqlite itself waits for a lock, blocking the event loop, before an attempt fails. */
-export const SQLITE_BUSY_TIMEOUT_MS = 100;
+const SQLITE_BUSY_TIMEOUT_MS = 100;
 
 /**
  * How long a transaction or statement keeps retrying, asynchronously, while another writer holds the write lock.
@@ -46,9 +46,9 @@ export function isBusyError(error: unknown): boolean {
 	return error instanceof Error && /database is locked/i.test(error.message);
 }
 
-export async function openSqliteDatabase(path: string, options: { busyBudgetMs?: number } = {}): Promise<Db> {
+export async function openSqliteDatabase(path: string, busyBudgetMs = SQLITE_BUSY_BUDGET_MS): Promise<Db> {
 	const inner = await openNodeSqliteDatabase(path, { busyTimeoutMs: SQLITE_BUSY_TIMEOUT_MS });
-	return new SqliteDb(inner, options.busyBudgetMs ?? SQLITE_BUSY_BUDGET_MS);
+	return new SqliteDb(inner, busyBudgetMs);
 }
 
 /**

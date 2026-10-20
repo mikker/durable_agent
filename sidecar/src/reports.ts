@@ -6,7 +6,7 @@
 import type { Db } from "./db/index.ts";
 import { log } from "./log.ts";
 
-export type ReportEvents = { report(id: number): void };
+type ReportEvents = { report(id: number): void };
 
 type ReportShape = {
 	type?: string;

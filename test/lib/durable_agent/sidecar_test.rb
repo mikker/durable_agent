@@ -12,8 +12,8 @@ class DurableAgent::SidecarTest < ActiveSupport::TestCase
     assert_equal "openai/gpt-6.1-sol", env["DURABLE_AGENT_MODEL"]
     assert_equal Rails.root.join("storage/durable_agent").to_s, env["DURABLE_AGENT_WORKSPACE_ROOT"]
     assert_equal "Dummy", env["DURABLE_AGENT_NAME"]
-    assert_not env.key?("DURABLE_AGENT_STORAGE_PATH")
-    assert_not env.key?("DURABLE_AGENT_MIRROR_DOCS")
+    assert_equal %w[ DATABASE_URL DURABLE_AGENT_TOKEN DURABLE_AGENT_HOST DURABLE_AGENT_PORT DURABLE_AGENT_RAILS_URL
+      DURABLE_AGENT_MODEL DURABLE_AGENT_WORKSPACE_ROOT DURABLE_AGENT_NAME ], env.keys - DurableAgent::Sidecar::PASS_THROUGH
     assert env.values.all?(String)
   end
 
@@ -103,14 +103,6 @@ class DurableAgent::SidecarTest < ActiveSupport::TestCase
 
     def database_url(**config)
       DurableAgent::Sidecar.database_url(ActiveRecord::DatabaseConfigurations::HashConfig.new("production", "primary", config))
-    end
-
-    def with_config(config)
-      previous = DurableAgent.config
-      DurableAgent.instance_variable_set(:@config, config)
-      yield
-    ensure
-      DurableAgent.instance_variable_set(:@config, previous)
     end
 
     def with_env(values)
