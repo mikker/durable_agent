@@ -57,7 +57,6 @@
   h3 { font-weight: 700; margin: 2lh 0 0.5lh; }
   h3::before { content: "### "; color: var(--accent); }
   p { margin: 0 0 1lh; }
-  .eyebrow { color: var(--accent); letter-spacing: 0.08em; text-transform: uppercase; margin: 0 0 1lh; }
   .lede { font-weight: 700; }
   header { display: block; }
   section { display: block; }
@@ -120,7 +119,6 @@
 
 <main>
   <header>
-    <div class="eyebrow">one gem · one sidecar · one database</div>
     <h1>durable_agent</h1>
     <p class="lede">pi-durable as a Rails gem. One <code>bundle add</code>, one migration, one extra process, one database: the app's own Postgres or SQLite.</p>
     <p class="prose">A Rails engine plus a bundled Node sidecar. The sidecar runs pi-durable's storage core over tables a Rails migration creates. Rails reads the same tables. One copy of the state. Contract: <code>DESIGN.md</code>.</p>
