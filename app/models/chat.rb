@@ -40,4 +40,33 @@ class Chat < ApplicationRecord
   def stop
     conversation.abort
   end
+
+  # The sidecar's change event for a conversation, from config.on_change: morph the regions that change while the
+  # agent works, instead of refreshing the page. Conversations without a chat (none today) broadcast nothing.
+  def self.changed(conversation)
+    find_by(durable_agent_conversation_id: conversation.id)&.broadcast_changes
+  end
+
+  # One stream message replacing #entries, #live and #composer with method="morph", so open tool details,
+  # focus and the draft message survive. The page renders the same components in the same order.
+  def broadcast_changes
+    content = live_regions.map { |component| replace_tag(component) }.join
+    Turbo::StreamsChannel.broadcast_stream_to(conversation, content: content)
+  end
+
+  def live_regions(entries = transcript)
+    [
+      Components::Chats::Transcript.new(chat: self, entries: entries),
+      Components::Chats::Live.new(conversation: conversation, failure_shown_inline: entries.last&.failed? || false),
+      Components::Chats::Composer.new(chat: self)
+    ]
+  end
+
+  private
+    REGION_IDS = { Components::Chats::Transcript => "entries", Components::Chats::Live => "live", Components::Chats::Composer => "composer" }.freeze
+
+    def replace_tag(component)
+      html = ApplicationController.render(component, layout: false)
+      ApplicationController.helpers.turbo_stream_action_tag(:replace, target: REGION_IDS.fetch(component.class), template: html, method: :morph)
+    end
 end

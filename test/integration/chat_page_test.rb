@@ -45,14 +45,36 @@ class ChatPageTest < ActionDispatch::IntegrationTest
     assert_select "button", text: "Stop", count: 0
   end
 
-  test "the stream is the conversation the sidecar's change events refresh" do
+  test "the stream is the conversation the sidecar's change events morph" do
     chat = chats(:invoice)
     get chat_path(chat)
     stream = css_select("turbo-cable-stream-source").first["signed-stream-name"]
     assert_equal Turbo::StreamsChannel.signed_stream_name(chat.conversation), stream
 
-    assert_turbo_stream_broadcasts chat.conversation do
-      DurableAgent.config.on_change.call(chat.conversation)
-    end
+    # One message per change event, holding three turbo-stream elements (the helper splits them out).
+    streams = capture_turbo_stream_broadcasts(chat.conversation) { DurableAgent.config.on_change.call(chat.conversation) }
+    assert_equal %w[ entries live composer ], streams.map { it["target"] }
+    assert_equal %w[ replace ] * 3, streams.map { it["action"] }
+    assert_equal %w[ morph ] * 3, streams.map { it["method"] }
+    assert_includes streams[0].at("template").inner_html, "INV-1 totals 42."
+    assert_includes streams[2].at("template").inner_html, chat_messages_path(chat)
+    stream_name = Turbo::StreamsChannel.send(:stream_name_from, chat.conversation)
+    assert_equal 1, ActionCable.server.pubsub.broadcasts(stream_name).size, "one message per change event"
+  end
+
+  test "a change broadcast while the agent writes carries the partial answer and the Stop button" do
+    chat = chats(:poem)
+    streams = capture_turbo_stream_broadcasts(chat.conversation) { Chat.changed(chat.conversation) }.index_by { it["target"] }
+    live = streams.fetch("live").at("template").inner_html
+    assert_includes live, "Writing…"
+    assert_includes live, "Roses are red"
+    assert_includes streams.fetch("composer").at("template").inner_html, "Stop"
+    assert_includes streams.fetch("entries").at("template").inner_html, "Write me a poem"
+  end
+
+  test "a change for a conversation without a chat broadcasts nothing" do
+    conversation = chats(:invoice).conversation
+    Chat.delete_all
+    assert_no_turbo_stream_broadcasts(conversation) { Chat.changed(conversation) }
   end
 end

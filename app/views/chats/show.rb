@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 # A chat, live: the page subscribes to its conversation, the sidecar posts a change event to Puma after every
-# commit, and the default on_change callback broadcasts a Turbo refresh that morphs this page.
+# commit, and Chat#broadcast_changes morphs the transcript, the live region and the composer in place.
 class Views::Chats::Show < Views::Base
   def initialize(chat:, connection:)
     @chat, @connection = chat, connection
@@ -18,22 +18,9 @@ class Views::Chats::Show < Views::Base
         Flex(dir: :col, gap: 6, align: :stretch) do
           render Components::ConnectionNotice.new(connection: @connection)
           render Components::Chats::Details.new(chat: @chat, entries: entries)
-          transcript(entries)
-          render Components::Chats::Live.new(conversation: @chat.conversation, failure_shown_inline: entries.last&.failed? || false)
-          render Components::Chats::Composer.new(chat: @chat)
+          @chat.live_regions(entries).each { |component| render component }
         end
       end
     end
   end
-
-  private
-    def transcript(entries)
-      div(id: "entries", data: { ui: "transcript" }) do
-        if entries.empty? && !@chat.busy?
-          EmptyState(title: "Say hello", description: "Your messages and the agent's answers appear here.")
-        else
-          entries.each { |entry| render Components::Chats::Entry.new(entry: entry) }
-        end
-      end
-    end
 end

@@ -22,7 +22,8 @@ DurableAgent.configure do |config|
   # Called in this app's web process when the sidecar reports a change. The defaults refresh the pages subscribed
   # with `turbo_stream_from conversation` (the chat page); reports without a conversation refresh `turbo_stream_from
   # "durable_agent:reports"`; sign-ins and sign-outs refresh `turbo_stream_from "durable_agent:auth"` (Settings).
-  # config.on_change = ->(conversation) { Turbo::StreamsChannel.broadcast_refresh_to(conversation) }
+  # This app replaces the chat page's live regions with a morph instead of refreshing the whole page (Chat#broadcast_changes).
+  config.on_change = ->(conversation) { Chat.changed(conversation) }
   # config.on_report = ->(report) { Rails.logger.warn(report.message) }
   # config.on_auth = ->(providers) { Turbo::StreamsChannel.broadcast_refresh_to("durable_agent:auth") }
 end
