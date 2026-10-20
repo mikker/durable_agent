@@ -1,0 +1,17 @@
+# Each chat points at a conversation in test/fixtures/durable_agent/conversations.yml. The list orders them by the
+# conversation's last activity (its newest entry).
+invoice:
+  title: "What is invoice INV-1?"
+  durable_agent_conversation_id: 900001
+
+poem:
+  title: "Write me a poem"
+  durable_agent_conversation_id: 900002
+
+failed:
+  title: "Are you there?"
+  durable_agent_conversation_id: 900003
+
+errored:
+  title: "you up?"
+  durable_agent_conversation_id: 900006

@@ -1,0 +1,25 @@
+# `request_id` is JSON-encoded, as pi-durable indexes it (DurableAgent::IndexedString); `record` is the
+# SubmissionRecord as JSON text.
+<% json = ->(value) { value.to_json.to_json } %>
+placed:
+  id: 900404
+  conversation_id: 900002
+  request_id: <%= DurableAgent::IndexedString.encode("message-4").to_json %>
+  status: placed
+  record: <%= json.({ id: 900404, conversationId: 900002, requestId: "message-4", type: "input", status: "placed", entry: 900201 }) %>
+
+unanswered:
+  id: 900403
+  conversation_id: 900003
+  request_id: <%= DurableAgent::IndexedString.encode("message-3").to_json %>
+  status: unanswered
+  record: <%= json.({ id: 900403, conversationId: 900003, requestId: "message-3", type: "input", status: "unanswered",
+    entry: 900302, reason: "no_model" }) %>
+
+model_error:
+  id: 900406
+  conversation_id: 900006
+  request_id: <%= DurableAgent::IndexedString.encode("message-6").to_json %>
+  status: unanswered
+  record: <%= json.({ id: 900406, conversationId: 900006, requestId: "message-6", type: "input", status: "unanswered",
+    entry: 900310, reason: "model_error", detail: "OAuth refresh failed for openai: OpenAI OAuth token request failed (400): {\n  \"error\": \"invalid_grant\"\n}" }) %>

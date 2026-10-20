@@ -1,0 +1,90 @@
+# `record` is pi-durable's EntryRecord as JSON text; kind, model and data live only there. `created_at` drives
+# Conversation#last_activity_at, which orders the chats list: invoice, then poem, then failed.
+<% json = ->(value) { value.to_json.to_json } %>
+system:
+  id: 900100
+  conversation_id: 900001
+  head: 900100
+  commit_seq: 1
+  created_at: <%= 10.minutes.ago.to_fs(:db) %>
+  record: <%= json.({ id: 900100, conversationId: 900001, kind: "pi.system", head: 900100,
+    model: [ { role: "system", content: "You are the assistant." } ] }) %>
+
+question:
+  id: 900101
+  conversation_id: 900001
+  commit_seq: 2
+  created_at: <%= 9.minutes.ago.to_fs(:db) %>
+  record: <%= json.({ id: 900101, conversationId: 900001, kind: "pi.user",
+    model: [ { role: "user", content: "What is invoice INV-1?" } ] }) %>
+
+answer_with_tool:
+  id: 900102
+  conversation_id: 900001
+  commit_seq: 3
+  created_at: <%= 8.minutes.ago.to_fs(:db) %>
+  record: <%= json.({ id: 900102, conversationId: 900001, kind: "pi.assistant",
+    model: [ { role: "assistant", content: [
+      { type: "thinking", thinking: "Look it up." },
+      { type: "text", text: "Let me look." },
+      { type: "toolCall", id: "call-1", name: "lookup_invoice", arguments: { number: "INV-1" } } ] } ] }) %>
+
+tool_result:
+  id: 900103
+  conversation_id: 900001
+  commit_seq: 4
+  created_at: <%= 7.minutes.ago.to_fs(:db) %>
+  record: <%= json.({ id: 900103, conversationId: 900001, kind: "pi.tool-result",
+    model: [ { role: "toolResult", toolCallId: "call-1", toolName: "lookup_invoice", isError: false,
+      content: [ { type: "text", text: '{"number":"INV-1","total":42}' } ] } ] }) %>
+
+answer:
+  id: 900104
+  conversation_id: 900001
+  commit_seq: 5
+  created_at: <%= 6.minutes.ago.to_fs(:db) %>
+  record: <%= json.({ id: 900104, conversationId: 900001, kind: "pi.assistant",
+    model: [ { role: "assistant", content: [ { type: "text", text: "INV-1 totals 42." } ], api: "openai-responses",
+      provider: "openai", model: "gpt-6.1-sol", stopReason: "stop", durationMs: 2345, timestamp: 1792477600000,
+      usage: { input: 1000, output: 300, cacheRead: 0, cacheWrite: 0, totalTokens: 1300,
+        cost: { input: 0.008, output: 0.002, cacheRead: 0, cacheWrite: 0, total: 0.01 } } } ] }) %>
+
+busy_question:
+  id: 900201
+  conversation_id: 900002
+  commit_seq: 6
+  created_at: <%= 1.hour.ago.to_fs(:db) %>
+  record: <%= json.({ id: 900201, conversationId: 900002, kind: "pi.user", model: [ { role: "user", content: "Write me a poem" } ] }) %>
+
+failed_answer:
+  id: 900301
+  conversation_id: 900003
+  commit_seq: 7
+  created_at: <%= 25.hours.ago.to_fs(:db) %>
+  record: <%= json.({ id: 900301, conversationId: 900003, kind: "pi.assistant", model: [ { role: "assistant", content: "Earlier answer." } ] }) %>
+
+failed_question:
+  id: 900302
+  conversation_id: 900003
+  commit_seq: 8
+  created_at: <%= 1.day.ago.to_fs(:db) %>
+  record: <%= json.({ id: 900302, conversationId: 900003, kind: "pi.user", model: [ { role: "user", content: "Are you there?" } ] }) %>
+
+errored_question:
+  id: 900310
+  conversation_id: 900006
+  commit_seq: 11
+  created_at: <%= 3.days.ago.to_fs(:db) %>
+  record: <%= json.({ id: 900310, conversationId: 900006, kind: "pi.user",
+    model: [ { role: "user", content: "you up?", timestamp: 1792477617373 } ] }) %>
+
+errored_answer:
+  id: 900311
+  conversation_id: 900006
+  commit_seq: 12
+  created_at: <%= 3.days.ago.to_fs(:db) %>
+  record: <%= json.({ id: 900311, conversationId: 900006, kind: "pi.assistant",
+    model: [ { role: "assistant", content: [], api: "openai-responses", provider: "openai", model: "gpt-6.1-sol",
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      stopReason: "error", errorMessage: "OAuth refresh failed for openai: OpenAI OAuth token request failed (400): {\n  \"error\": \"invalid_grant\"\n}",
+      timestamp: 1792477617389, durationMs: 671 } ] }) %>

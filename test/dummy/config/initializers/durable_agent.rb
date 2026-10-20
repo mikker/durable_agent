@@ -1,0 +1,36 @@
+DurableAgent.configure do |config|
+  # The default model, "provider/modelId". Unset, it is ENV["DURABLE_AGENT_MODEL"], then "openai/gpt-6.1-sol" (on the
+  # ChatGPT sign-in), so `DURABLE_AGENT_MODEL=faux/faux-1 bin/dev` runs the scripted offline model in both processes.
+  # Setting it here wins over the variable.
+  # config.model = "openai/gpt-6.1-sol"
+
+  # Tools are DurableAgent::Tool subclasses. Give their names as strings so code reloading keeps working.
+  config.tools = %w[ CurrentTime SearchChats RenameChat ]
+
+  # Where the sidecar listens, and where it reaches this app for tools and change events.
+  # config.host = "127.0.0.1"
+  # config.port = 4010
+  # config.rails_url = "http://127.0.0.1:3000"
+
+  # The shared secret. Defaults to credentials.durable_agent.token, then ENV["DURABLE_AGENT_TOKEN"], and in
+  # development and test to a value derived from secret_key_base.
+  # config.token = "..."
+
+  # The models' base class. If ApplicationRecord uses connects_to (roles, shards), inherit from it.
+  # config.parent_record_class = "ApplicationRecord"
+
+  # Called in this app's web process when the sidecar reports a change. The defaults refresh the pages subscribed
+  # with `turbo_stream_from conversation` (the chat page); reports without a conversation refresh `turbo_stream_from
+  # "durable_agent:reports"`; sign-ins and sign-outs refresh `turbo_stream_from "durable_agent:auth"` (Settings).
+  # This app replaces the chat page's live regions with a morph instead of refreshing the whole page (Chat#broadcast_changes).
+  config.on_change = ->(conversation) { Chat.changed(conversation) }
+  # config.on_report = ->(report) { Rails.logger.warn(report.message) }
+  # config.on_auth = ->(providers) { Turbo::StreamsChannel.broadcast_refresh_to("durable_agent:auth") }
+end
+
+# In production the sidecar calls this app over plain HTTP at rails_url (loopback by default). With
+# config.force_ssl, keep /durable_agent out of the HTTPS redirect; with config.hosts set, allow the sidecar's
+# host. In config/environments/production.rb:
+#
+#   config.ssl_options = { redirect: { exclude: ->(request) { request.path.start_with?("/durable_agent") } } }
+#   config.hosts << "127.0.0.1"

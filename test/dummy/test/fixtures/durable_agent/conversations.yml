@@ -1,0 +1,25 @@
+# Rows as the sidecar commits them, for the chats in test/fixtures/chats.yml. Ids from 900000, above anything
+# pi-durable numbers and below the ids DurableAgent::TestHelper's fake_sidecar hands out (950001 on).
+# `record` is pi-durable's ConversationRecord as JSON text: the column is text, so a YAML Hash would be stored as
+# YAML; the model decodes the JSON to a Hash.
+<% json = ->(value) { value.to_json.to_json } %>
+idle:
+  id: 900001
+  created_at: <%= 2.days.ago.to_fs(:db) %>
+  record: <%= json.({ id: 900001 }) %>
+
+busy:
+  id: 900002
+  created_at: <%= 2.days.ago.to_fs(:db) %>
+  record: <%= json.({ id: 900002 }) %>
+
+failed:
+  id: 900003
+  created_at: <%= 2.days.ago.to_fs(:db) %>
+  record: <%= json.({ id: 900003 }) %>
+
+# A real-provider conversation whose last request errored: the model answered with stopReason "error".
+errored:
+  id: 900006
+  record: <%= json.({ id: 900006 }) %>
+  created_at: <%= 3.days.ago.to_fs(:db) %>

@@ -1,0 +1,28 @@
+/* Nitro Kit leads so its cascade layers and Tailwind theme aliases apply to the whole file. */
+@import "../builds/tailwind/nitro_kit";
+@import "tailwindcss";
+
+/* The meta line under each transcript entry: time, model, duration, tokens. */
+[data-ui="meta"] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+  font-size: var(--nk-text-xs);
+  color: var(--nk-color-muted-foreground);
+}
+
+[data-ui="entry"][data-role="user"] {
+  align-self: flex-end;
+  max-width: 85%;
+}
+
+[data-ui="entry"][data-role="user"] [data-ui="meta"] {
+  justify-content: flex-end;
+}
+
+[data-ui="transcript"] {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
