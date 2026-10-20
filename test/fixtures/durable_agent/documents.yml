@@ -23,6 +23,16 @@ idle_retired_inbox:
   retired_at: 3
   record: <%= json.({ id: 900502, kind: "pi.inbox", scope: { kind: "conversation", conversationId: 900001 }, history: "latest", fork: "copy", createdAt: 1, retiredAt: 3 }) %>
 
+failed_agent:
+  id: 900506
+  kind: <%= DurableAgent::IndexedString.encode("pi.agent").to_json %>
+  family: 0
+  key_value: <%= DurableAgent::IndexedString.encode("").to_json %>
+  scope_kind: conversation
+  owner_id: 900003
+  created_at: 1
+  record: <%= json.({ id: 900506, kind: "pi.agent", scope: { kind: "conversation", conversationId: 900003 }, history: "rewindable", fork: "copy", createdAt: 1 }) %>
+
 busy_live:
   id: 900503
   kind: <%= DurableAgent::IndexedString.encode("pi.live").to_json %>

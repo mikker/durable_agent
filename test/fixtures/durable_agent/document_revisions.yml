@@ -16,6 +16,13 @@ idle_retired_inbox_base:
   version: 1
   content: <%= json.({ items: [ { id: 1, type: "input" } ] }) %>
 
+failed_agent_base:
+  document_id: 900506
+  seq: 2
+  kind: base
+  version: 1
+  content: <%= json.({ model: { provider: "faux", modelId: "faux-1" } }) %>
+
 busy_live_base:
   document_id: 900503
   seq: 6

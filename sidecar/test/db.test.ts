@@ -313,7 +313,11 @@ test("[postgres] transactions under random connection kills each commit or rejec
 						},
 					);
 				outcomes[outcome]++;
-				assert.equal(await setting(`stress_${i}`), outcome === "committed" ? "x" : undefined);
+				// A kill that lands between the server's COMMIT and the client reading its acknowledgement rejects a
+				// transaction that did commit: a rejected one may or may not have landed, a committed one always has.
+				const stored = await setting(`stress_${i}`);
+				if (outcome === "committed") assert.equal(stored, "x");
+				else assert.ok(stored === undefined || stored === "x", `rejected transaction left ${stored}`);
 			}
 			await Promise.all(kills);
 		});

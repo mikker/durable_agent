@@ -17,7 +17,7 @@ class DurableAgent::Submission < DurableAgent::ApplicationRecord
 
   # Why an input went unanswered, for people. pi-durable reasons: no_model, run_failed, aborted, withdrawn...
   REASONS = {
-    "no_model" => "No model could run. The configured model id may be unknown, or the provider is not connected.",
+    "no_model" => "No model could run: the conversation has none, or the sidecar does not know its model id.",
     "run_failed" => "The model request failed.",
     "aborted" => "The run was stopped."
   }.freeze
@@ -35,8 +35,14 @@ class DurableAgent::Submission < DurableAgent::ApplicationRecord
   def entry = DurableAgent::Entry.find_by(id: entry_id)
   def answer = DurableAgent::Entry.find_by(id: answer_entry_id)
 
+  # no_model names the conversation's pinned model when it has one: the sidecar does not register that provider, or
+  # the id is not in its catalog. pi-durable records no detail for it.
   def explanation
-    REASONS.fetch(reason.to_s) { "The agent did not answer (#{reason})." }
+    if reason == "no_model" && (model = conversation&.model)
+      "Model #{model} is not available on the sidecar. Its provider is not registered, or the model id is unknown."
+    else
+      REASONS.fetch(reason.to_s) { "The agent did not answer (#{reason})." }
+    end
   end
 
   def pending? = status.in?(%w[ queued placed ])

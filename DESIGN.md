@@ -191,7 +191,9 @@ Rails encodes them with `DurableAgent::IndexedString` (`JSON.generate`), never `
   listener on checkout, so the checked-out client carries the adapter's own `error` listener from checkout to
   release: a dropped connection rejects the pending query and every later one (the transaction rejects with the
   connection error, without a `ROLLBACK`), and the client is released broken so the pool discards it; it is never
-  an uncaught exception. Single statements go through `pool.query`, which guards its checkout the same way.
+  an uncaught exception. A transaction rejected this way may still have committed, when the connection died
+  between the server's `COMMIT` and its acknowledgement; the Harness treats the rejection as fatal, and the
+  restarted sidecar resumes from whatever the database holds, so both outcomes are consistent. Single statements go through `pool.query`, which guards its checkout the same way.
   Retries, because pi-durable treats a storage error as fatal to the session: a checkout or `BEGIN` that fails
   with a connection-class error (`ECONNRESET`, `57P01`, `08*`, "Connection terminated") is retried once, since
   nothing has run; outside a transaction only a statement that starts with `SELECT` (after leading comments) is
@@ -415,7 +417,7 @@ DurableAgent.start(model: nil, instructions: nil)   # => DurableAgent::Conversat
 DurableAgent.conversation(id)
 DurableAgent.auth   # => {"openai" => {"type" => "oauth", "source" => "OAuth"},
                     #     "anthropic" => {"type" => "api_key", "source" => "ANTHROPIC_API_KEY"}, "google" => nil, ...}
-                    # every provider pi-ai knows, signed in or not, plus "faux" when it is the sidecar's model;
+                    # every provider pi-ai knows, signed in or not, plus "faux", the offline model;
                     # `source` is pi-ai's: "OAuth", "stored credential", or the environment variable it read
 
 conversation.say("Hello", request_id: message.id, when_busy: nil)   # => DurableAgent::Submission (persisted)

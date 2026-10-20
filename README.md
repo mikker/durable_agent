@@ -118,8 +118,8 @@ connection.cancel_login(login["id"])
 connection.disconnect
 ```
 
-`DurableAgent.auth` lists every provider the sidecar's pi-ai knows, signed in or not (`nil`), plus `faux` when the
-sidecar runs the faux model. `type` is `"oauth"` or `"api_key"`; `source` says where pi-ai found it (`"OAuth"`,
+`DurableAgent.auth` lists every provider the sidecar's pi-ai knows, signed in or not (`nil`), plus `faux`, the
+offline model. `type` is `"oauth"` or `"api_key"`; `source` says where pi-ai found it (`"OAuth"`,
 `"stored credential"`, or the environment variable). `Connection` covers OpenAI and Anthropic, and tolerates an
 unreachable sidecar: it reads as not connected with `error` set.
 
@@ -199,6 +199,10 @@ Every setting the sidecar also reads defaults to its `DURABLE_AGENT_*` variable 
 `RAILS_URL`, `TOKEN`, `WORKSPACE_ROOT`, `NAME`), so `DURABLE_AGENT_MODEL=faux/faux-1 bin/dev` moves both
 processes. A value set in the initializer wins over the variable, which is why the generated initializer leaves
 `config.model` commented out.
+
+A conversation pins the model it was started with (`DurableAgent.start(model:)`, else the default) and keeps it
+when the default changes; `conversation.model` reads it. The faux model is registered on every sidecar, so
+conversations from a `faux/faux-1` session still answer after the switch to a real provider.
 
 If your `ApplicationRecord` uses `connects_to` (roles, shards), set `config.parent_record_class =
 "ApplicationRecord"` in the initializer, so the durable_agent models inherit it and follow role switching.

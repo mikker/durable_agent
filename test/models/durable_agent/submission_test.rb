@@ -48,6 +48,16 @@ class DurableAgent::SubmissionTest < ActiveSupport::TestCase
     assert durable_agent_submissions(:unanswered).unanswered?
   end
 
+  test "no_model names the conversation's pinned model" do
+    unanswered = durable_agent_submissions(:unanswered)
+    assert_equal "faux/faux-1", unanswered.conversation.model
+    assert_equal "Model faux/faux-1 is not available on the sidecar. Its provider is not registered, or the model id is unknown.",
+      unanswered.explanation
+
+    without_model = DurableAgent::Submission.new(record: { "reason" => "no_model" })
+    assert_equal "No model could run: the conversation has none, or the sidecar does not know its model id.", without_model.explanation
+  end
+
   test "unknown reasons are explained generically" do
     submission = DurableAgent::Submission.new(record: { "reason" => "withdrawn" })
     assert_equal "The agent did not answer (withdrawn).", submission.explanation

@@ -42,6 +42,14 @@ class DurableAgent::Conversation < DurableAgent::ApplicationRecord
 
   def live = document("pi.live")
   def inbox = document("pi.inbox").fetch("items", [])
+  def agent = document("pi.agent")
+
+  # The model this conversation runs on, "provider/modelId", pinned when it was started. The sidecar's default
+  # model only applies to conversations started without one.
+  def model
+    ref = agent["model"]
+    "#{ref["provider"]}/#{ref["modelId"]}" if ref
+  end
 
   def busy?
     live["run"].present?

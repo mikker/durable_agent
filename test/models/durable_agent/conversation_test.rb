@@ -33,6 +33,12 @@ class DurableAgent::ConversationTest < ActiveSupport::TestCase
     assert_nil idle.streaming_message
   end
 
+  test "model is pinned in the pi.agent document" do
+    assert_equal "faux/faux-1", durable_agent_conversations(:failed).model
+    assert_equal({ "model" => { "provider" => "faux", "modelId" => "faux-1" } }, durable_agent_conversations(:failed).agent)
+    assert_nil durable_agent_conversations(:idle).model, "no pi.agent document yet"
+  end
+
   test "documents are the conversation's current ones" do
     idle = durable_agent_conversations(:idle)
 
@@ -44,7 +50,7 @@ class DurableAgent::ConversationTest < ActiveSupport::TestCase
   test "last failure is the newest unanswered input after the last answer" do
     failure = durable_agent_conversations(:failed).last_failure
     assert_equal durable_agent_submissions(:unanswered), failure
-    assert_match "provider is not connected", failure.explanation
+    assert_match "Model faux/faux-1 is not available", failure.explanation
 
     assert_nil durable_agent_conversations(:idle).last_failure
   end

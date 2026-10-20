@@ -37,17 +37,16 @@ export type OpenedHarness = {
 /**
  * Model access for the whole process. OpenAI accepts an `OPENAI_API_KEY` or a Sign in with ChatGPT credential
  * from the store (see auth.ts); Anthropic an `ANTHROPIC_API_KEY` or its own OAuth. `faux` is the scripted
- * offline model.
+ * offline model, always registered: a conversation pins the model it was started with, so one started on
+ * `faux/faux-1` must still answer after the default moves to a real provider.
  */
-export function createProcessModels(config: Config, credentials: CredentialStore): MutableModels {
+export function createProcessModels(_config: Config, credentials: CredentialStore): MutableModels {
 	const models = createModels({ credentials });
 	models.setProvider(openaiProvider());
 	models.setProvider(anthropicProvider());
-	if (config.model.provider === "faux") {
-		const faux = fauxProvider({ tokensPerSecond: 400 });
-		models.setProvider(faux.provider);
-		faux.setResponses(Array.from({ length: 1000 }, () => fauxAssistantMessage("(faux model) Offline development reply.")));
-	}
+	const faux = fauxProvider({ tokensPerSecond: 400 });
+	models.setProvider(faux.provider);
+	faux.setResponses(Array.from({ length: 1000 }, () => fauxAssistantMessage("(faux model) Offline development reply.")));
 	return models;
 }
 
