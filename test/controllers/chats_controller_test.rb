@@ -7,7 +7,14 @@ class ChatsControllerTest < ActionDispatch::IntegrationTest
     get chats_path
     assert_response :success
     assert_select "h1", "Chats"
-    assert_select "[data-nk=table] tbody tr", 3
+    assert_select "[data-nk=table] tbody tr", 4
+    assert_select "[data-nk=table] thead th", text: "Model"
+    assert_select "tr##{dom_id(chats(:invoice))} code", text: "openai/gpt-6.1-sol"
+    assert_select "tr##{dom_id(chats(:invoice))} [data-nk=badge]", text: "Idle"
+    assert_select "tr##{dom_id(chats(:poem))} [data-nk=badge]", text: "Thinking"
+    assert_select "tr##{dom_id(chats(:poem))} em", text: "default"
+    assert_select "tr##{dom_id(chats(:failed))} [data-nk=badge]", text: "Failed"
+    assert_select "tr##{dom_id(chats(:errored))} [data-nk=badge]", text: "Failed"
     assert_select "[data-nk=table] tbody tr:first-child a[href=?]", chat_path(chats(:invoice)), text: "What is invoice INV-1?"
     assert_select "[data-nk=table] time", text: /ago\z/
     assert_select "form[action=?][method=post] button", chats_path, text: "New chat"
@@ -32,7 +39,7 @@ class ChatsControllerTest < ActionDispatch::IntegrationTest
   test "index orders chats by their conversation's last activity" do
     get chats_path
     rows = css_select("[data-nk=table] tbody tr th a").map(&:text)
-    assert_equal [ chats(:invoice), chats(:poem), chats(:failed) ].map(&:title), rows
+    assert_equal [ chats(:invoice), chats(:poem), chats(:failed), chats(:errored) ].map(&:title), rows
     assert_select "tr##{dom_id(chats(:poem))} time[datetime=?]", chats(:poem).last_activity_at.iso8601, text: "about 1 hour ago"
   end
 
@@ -81,10 +88,23 @@ class ChatsControllerTest < ActionDispatch::IntegrationTest
     assert_select "button", text: "Stop", count: 0
   end
 
+  test "show renders an answer that ended in a model error inline, with the provider's message" do
+    get chat_path(chats(:errored))
+    assert_response :success
+    assert_select "#entries article[data-role=assistant] [data-nk=alert][data-variant=destructive]", /invalid_grant/
+    assert_select "#entries article[data-role=assistant] [data-ui=meta]", /openai\/gpt-6\.1-sol/
+    assert_select "#entries article[data-role=assistant] [data-ui=meta]", /stopped: error/
+    assert_select "#entries article[data-role=assistant] a[href=?]", settings_chatgpt_connection_path, text: /Sign in with ChatGPT again/
+    assert_select "#live:empty", true, "the inline error already explains the failure"
+    assert_select "[data-nk=details-table]", /Failed/
+  end
+
   test "show of a new chat invites the first message" do
     fake_sidecar
     get chat_path(Chat.start)
     assert_select "#entries [data-nk=empty-state]", /Say hello/
     assert_select "#live:empty"
+    assert_select "[data-nk=details-table]", /sidecar default/
+    assert_select "[data-nk=details-table]", /0 from you, 0 answers, 0 tool calls/
   end
 end

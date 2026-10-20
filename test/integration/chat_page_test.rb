@@ -26,6 +26,21 @@ class ChatPageTest < ActionDispatch::IntegrationTest
 
     assert_select "#live:empty"
     assert_select "form[action=?] textarea[name='message[content]']", chat_messages_path(chat)
+
+    # Meta under each entry, and the chat's details collapsed above the transcript.
+    assert_select "#entries article[data-role=assistant] [data-ui=meta]", /openai\/gpt-6\.1-sol/
+    assert_select "#entries article[data-role=assistant] [data-ui=meta]", /2\.3 s/
+    assert_select "#entries article[data-role=assistant] [data-ui=meta]", /1,300 tokens/
+    assert_select "#entries article[data-role=assistant] [data-ui=meta]", /\$0\.0100/
+    assert_select "#entries article[data-role=user] [data-ui=meta] time", 1
+    assert_select "#entries article[data-role=tool] [data-ui=meta]", /lookup_invoice/
+    assert_select "[data-nk=accordion] details:not([open]) summary", text: /Details/
+    assert_select "[data-nk=details-table] th", text: "Model"
+    assert_select "[data-nk=details-table] code", text: "openai/gpt-6.1-sol"
+    assert_select "[data-nk=details-table]", /1 from you, 2 answers, 1 tool call/
+    assert_select "[data-nk=details-table]", /3,100 total/
+    assert_select "[data-nk=details-table] li", 2
+    assert_select "[data-nk=details-table]", /\$0\.0200/
     assert_select "button", text: "Send"
     assert_select "button", text: "Stop", count: 0
   end

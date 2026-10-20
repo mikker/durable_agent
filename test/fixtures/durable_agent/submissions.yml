@@ -15,3 +15,11 @@ unanswered:
   status: unanswered
   record: <%= json.({ id: 900403, conversationId: 900003, requestId: "message-3", type: "input", status: "unanswered",
     entry: 900302, reason: "no_model" }) %>
+
+model_error:
+  id: 900406
+  conversation_id: 900006
+  request_id: <%= DurableAgent::IndexedString.encode("message-6").to_json %>
+  status: unanswered
+  record: <%= json.({ id: 900406, conversationId: 900006, requestId: "message-6", type: "input", status: "unanswered",
+    entry: 900310, reason: "model_error", detail: "OAuth refresh failed for openai: OpenAI OAuth token request failed (400): {\n  \"error\": \"invalid_grant\"\n}" }) %>

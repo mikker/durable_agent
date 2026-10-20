@@ -3,15 +3,17 @@
 # What the agent is doing right now: the streaming partial answer, running tools and queued inputs, or why the
 # last input went unanswered. Empty when there is nothing to say.
 class Components::Chats::Live < Components::Base
-  def initialize(conversation:)
-    @conversation = conversation
+  # `failure_shown_inline`: the transcript already ends in the failed answer that explains the last failure
+  # (Components::Chats::Entry renders it), so the alert here would repeat it.
+  def initialize(conversation:, failure_shown_inline: false)
+    @conversation, @failure_shown_inline = conversation, failure_shown_inline
   end
 
   def view_template
     div(id: "live", data: { ui: "live" }) do
       if @conversation.busy?
         busy
-      elsif (failure = @conversation.last_failure)
+      elsif !@failure_shown_inline && (failure = @conversation.last_failure)
         Alert(variant: :destructive, title: "No answer", description: failure.explanation)
       end
     end

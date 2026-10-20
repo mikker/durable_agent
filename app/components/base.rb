@@ -9,6 +9,9 @@ class Components::Base < Phlex::HTML
   include Phlex::Rails::Helpers::FormWith
   include Phlex::Rails::Helpers::SimpleFormat
   include Phlex::Rails::Helpers::TimeAgoInWords
+  include Phlex::Rails::Helpers::TimeTag
+  include Phlex::Rails::Helpers::NumberWithDelimiter
+  include Phlex::Rails::Helpers::NumberToCurrency
   include Phlex::Rails::Helpers::TurboStreamFrom
   include Phlex::Rails::Helpers::ContentFor
 

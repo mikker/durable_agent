@@ -11,3 +11,7 @@ poem:
 failed:
   title: "Are you there?"
   durable_agent_conversation_id: 900003
+
+errored:
+  title: "you up?"
+  durable_agent_conversation_id: 900006

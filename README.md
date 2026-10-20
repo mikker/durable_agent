@@ -46,7 +46,10 @@ auth event and the gem's default `on_auth` refreshes it. The sidecar stores the 
 and refreshes it. Disconnect signs out.
 
 `bin/rails chatgpt:import` copies the sign-in from the previous version of this app (the `agent_credentials` table
-in the Postgres database `slopdep_development`, read only) so you do not have to sign in again.
+in the Postgres database `slopdep_development`, read only). Only do this when nothing else still uses that grant:
+OpenAI rotates refresh tokens, so a credential shared with another installation (the old app, pi itself) dies as
+soon as the other side refreshes it, and the next message ends in a model error `invalid_grant`. The chat shows it
+with a link back to Settings; signing in again from there creates a grant of this app's own.
 
 ## The model
 

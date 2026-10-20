@@ -26,6 +26,11 @@ class Views::Chats::Index < Views::Base
       end
     end
 
+    def status(status)
+      label, color = Components::Chats::Details::STATUS.fetch(status)
+      Badge(label, size: :sm, color: color)
+    end
+
     def last_activity(at)
       time(datetime: at.iso8601) { "#{time_ago_in_words(at)} ago" }
     end
@@ -35,6 +40,8 @@ class Views::Chats::Index < Views::Base
         table.thead do
           table.tr do
             table.th("Chat")
+            table.th("Model")
+            table.th("Status")
             table.th("Last activity")
           end
         end
@@ -42,6 +49,8 @@ class Views::Chats::Index < Views::Base
           @chats.each do |chat|
             table.tr(html: { id: dom_id(chat) }) do
               table.th(scope: :row) { a(href: chat_path(chat)) { chat.title } }
+              table.td { chat.model ? code { chat.model } : em { "default" } }
+              table.td { status(chat.status) }
               table.td { last_activity(chat.last_activity_at) }
             end
           end

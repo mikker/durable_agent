@@ -17,3 +17,9 @@ failed:
   id: 900003
   created_at: <%= 2.days.ago.to_fs(:db) %>
   record: <%= json.({ id: 900003 }) %>
+
+# A real-provider conversation whose last request errored: the model answered with stopReason "error".
+errored:
+  id: 900006
+  record: <%= json.({ id: 900006 }) %>
+  created_at: <%= 3.days.ago.to_fs(:db) %>

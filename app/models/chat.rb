@@ -14,7 +14,16 @@ class Chat < ApplicationRecord
     SQL
   end
 
-  delegate :transcript, :busy?, :streaming_message, :running_tools, :inbox, :last_failure, :last_activity_at, to: :conversation
+  delegate :transcript, :busy?, :streaming_message, :running_tools, :inbox, :last_failure, :last_activity_at,
+    :model, :usage_by_model, :total_tokens, :total_cost, to: :conversation
+
+  # What the chat is doing: :busy while a run is on, :failed when the last input went unanswered, else :idle.
+  def status
+    if busy? then :busy
+    elsif last_failure then :failed
+    else :idle
+    end
+  end
 
   # Creates the conversation on the sidecar (which commits its row before answering), then the chat.
   def self.start

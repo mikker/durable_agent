@@ -35,6 +35,17 @@ class ChatTest < ActiveSupport::TestCase
     assert calls.all? { |call| call[2][:request_id].match?(/\A\h{8}-\h{4}-\h{4}-\h{4}-\h{12}\z/) }
   end
 
+  test "status and the conversation's metadata" do
+    assert_equal :idle, chats(:invoice).status
+    assert_equal :busy, chats(:poem).status
+    assert_equal :failed, chats(:failed).status
+    assert_equal :failed, chats(:errored).status
+    assert_equal "openai/gpt-6.1-sol", chats(:invoice).model
+    assert_nil chats(:poem).model
+    assert_equal 3100, chats(:invoice).total_tokens
+    assert_in_delta 0.02, chats(:invoice).total_cost
+  end
+
   test "say on a named chat keeps its title" do
     fake_sidecar
     chat = chats(:failed)
@@ -66,6 +77,6 @@ class ChatTest < ActiveSupport::TestCase
   end
 
   test "by_last_activity orders by the conversations' newest entries" do
-    assert_equal chats(:invoice, :poem, :failed), Chat.by_last_activity.to_a
+    assert_equal chats(:invoice, :poem, :failed, :errored), Chat.by_last_activity.to_a
   end
 end
