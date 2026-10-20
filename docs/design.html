@@ -14,6 +14,7 @@
     --accent: oklch(69.6% 0.17 162.48);   /* the sidecar and the gem's own code: what this page is about */
     --accent-soft: oklch(69.6% 0.17 162.48 / 0.16);
     --warn: oklch(62% 0.16 65);
+    --syntax: oklch(42% 0.12 162.48);
     --line: #c9c9c9;
     --code: #eeeeee;
     --surface: #ffffff;
@@ -27,13 +28,13 @@
     :root:not([data-theme="light"]) {
       color-scheme: dark;
       --paper: #1b1b1b; --ink: #f7f7f7; --muted: #9a9a9a; --line: #333333; --code: #222222; --surface: #202020;
-      --accent-soft: oklch(69.6% 0.17 162.48 / 0.22);
+      --accent-soft: oklch(69.6% 0.17 162.48 / 0.22); --syntax: var(--accent);
     }
   }
   :root[data-theme="dark"] {
     color-scheme: dark;
     --paper: #1b1b1b; --ink: #f7f7f7; --muted: #9a9a9a; --line: #333333; --code: #222222; --surface: #202020;
-    --accent-soft: oklch(69.6% 0.17 162.48 / 0.22);
+    --accent-soft: oklch(69.6% 0.17 162.48 / 0.22); --syntax: var(--accent);
   }
 
   * { box-sizing: border-box; }
@@ -67,6 +68,9 @@
   code { background: var(--code); padding: 0 0.5ch; overflow-wrap: anywhere; }
   pre { background: var(--code); max-width: 100%; margin: 0 0 1lh; padding: 1lh 2ch; overflow-x: auto; }
   pre code { background: transparent; padding: 0; overflow-wrap: normal; }
+  .hl-c { font-style: italic; color: var(--muted); }
+  .hl-s, .hl-k, .hl-y { color: var(--syntax); }
+  .hl-n { font-weight: 700; }
   ul, ol { margin: 0 0 1lh; padding-left: 4ch; }
   li { margin: 0; }
   li::marker { color: var(--accent); }
@@ -127,19 +131,19 @@
   <section>
     <h2>Install, use</h2>
     <h3>Install</h3>
-<pre><code>bundle add durable_agent
-bin/rails g durable_agent:install   # migration, initializer, mount, Procfile.dev line
-bin/rails db:migrate                # twelve durable_agent_* tables
-bin/dev                             # web, sidecar</code></pre>
+<pre><code class="lang-shell"><span class="hl-n">bundle</span> add durable_agent
+<span class="hl-n">bin/rails</span> g durable_agent:install   <span class="hl-c"># migration, initializer, mount, Procfile.dev line</span>
+<span class="hl-n">bin/rails</span> db:migrate                <span class="hl-c"># twelve durable_agent_* tables</span>
+<span class="hl-n">bin/dev</span>                             <span class="hl-c"># web, sidecar</span></code></pre>
     <h3>Use</h3>
-<pre><code>conversation = DurableAgent.start            # model from config
-conversation.say("Summarize the invoice",
-                 request_id: message.id)      # idempotent
-conversation.transcript                      # pi-durable's own entries
-conversation.busy?                           # the pi.live document
+<pre><code class="lang-ruby">conversation = <span class="hl-n">DurableAgent</span>.start         <span class="hl-c"># model from config</span>
+conversation.say(<span class="hl-s">&quot;Summarize the invoice&quot;</span>,
+                 request_id: message.id)  <span class="hl-c"># idempotent on request_id</span>
+conversation.transcript                   <span class="hl-c"># pi-durable&#x27;s own entries</span>
+conversation.busy?                        <span class="hl-c"># the pi.live document</span>
 
-# in the view
-turbo_stream_from conversation               # refresh broadcasts, morph</code></pre>
+<span class="hl-c"># in the view</span>
+turbo_stream_from conversation            <span class="hl-c"># refresh broadcasts, morph</span></code></pre>
     <p class="prose"><code>say</code> is idempotent on <code>request_id</code> and returns the submission row, committed before the sidecar answers. Tools are Ruby classes (below). The app brings its own <code>pg</code> or <code>sqlite3</code>.</p>
   </section>
 
@@ -476,22 +480,22 @@ turbo_stream_from conversation               # refresh broadcasts, morph</code><
   <section>
     <h2>Tools in Ruby</h2>
     <p class="prose">The sidecar fetches definitions and installs them as one extension. <code>POST /tools/reload</code> replaces it in place.</p>
-<pre><code># app/tools/lookup_invoice.rb
-class LookupInvoice &lt; DurableAgent::Tool
-  description "Fetch one invoice by number"
-  param :number, :string, "Invoice number like INV-1042"
-  replay :safe                      # no side effects; may rerun after a crash
+<pre><code class="lang-ruby"><span class="hl-c"># app/tools/lookup_invoice.rb</span>
+<span class="hl-k">class</span> <span class="hl-n">LookupInvoice</span> &lt; <span class="hl-n">DurableAgent::Tool</span>
+  description <span class="hl-s">&quot;Fetch one invoice by number&quot;</span>
+  param <span class="hl-y">:number</span>, <span class="hl-y">:string</span>, <span class="hl-s">&quot;Invoice number like INV-1042&quot;</span>
+  replay <span class="hl-y">:safe</span>                        <span class="hl-c"># no side effects; may rerun after a crash</span>
 
-  def call(number:)
-    Invoice.find_by!(number:).as_json(only: %i[ number total status due_on ])
-  end
-end
+  <span class="hl-k">def</span> <span class="hl-n">call</span>(number:)
+    <span class="hl-n">Invoice</span>.find_by!(number:).as_json(only: <span class="hl-s">%i[ number total status due_on ]</span>)
+  <span class="hl-k">end</span>
+<span class="hl-k">end</span>
 
-# config/initializers/durable_agent.rb
-DurableAgent.configure do |config|
-  config.model = "openai/gpt-6.1-sol"
-  config.tools = %w[ LookupInvoice ]   # class names survive code reloading; classes work too
-end</code></pre>
+<span class="hl-c"># config/initializers/durable_agent.rb</span>
+<span class="hl-n">DurableAgent</span>.configure <span class="hl-k">do</span> |config|
+  config.model = <span class="hl-s">&quot;openai/gpt-6.1-sol&quot;</span>
+  config.tools = <span class="hl-s">%w[ LookupInvoice ]</span>  <span class="hl-c"># class names survive code reloading</span>
+<span class="hl-k">end</span></code></pre>
     <figure>
       <svg viewBox="0 0 900 190" role="img" aria-label="Tool round trip: the sidecar fetches tool definitions from Rails at boot, retrying until Rails answers; when the model calls a tool, the sidecar posts the arguments to Rails, the Ruby tool class runs, and the result is committed as a tool-result entry and returned to the model.">
         <defs>
@@ -534,20 +538,21 @@ end</code></pre>
 
   <section>
     <h2>Reading the tables from Ruby</h2>
-<pre><code>DurableAgent.start(model: nil, instructions: nil)   # => Conversation (created on the sidecar, then found)
-DurableAgent.conversation(id)
-DurableAgent.auth                                   # => {"openai" => {"type" => "oauth"}, "anthropic" => nil}
+<pre><code class="lang-ruby"><span class="hl-n">DurableAgent</span>.start(model: <span class="hl-k">nil</span>, instructions: <span class="hl-k">nil</span>)   <span class="hl-c"># =&gt; Conversation, created on the sidecar</span>
+<span class="hl-n">DurableAgent</span>.conversation(id)
+<span class="hl-n">DurableAgent</span>.auth                                   <span class="hl-c"># =&gt; {&quot;openai&quot; =&gt; {&quot;type&quot; =&gt; &quot;oauth&quot;}, &quot;anthropic&quot; =&gt; nil}</span>
 
-conversation.say("Hello", request_id: message.id, when_busy: nil)   # => Submission (the row exists)
+conversation.say(<span class="hl-s">&quot;Hello&quot;</span>, request_id: message.id)   <span class="hl-c"># =&gt; Submission, the row exists</span>
 conversation.abort
-conversation.transcript                  # visible entries, oldest first (an Array)
+conversation.transcript                             <span class="hl-c"># visible entries, oldest first</span>
 conversation.entries / submissions / tasks / reports / documents
-conversation.document("pi.live") / live / busy? / streaming_message / running_tools / inbox / last_failure
-conversation.model / total_tokens / total_cost / usage_by_model   # pi.agent and pi.usage
-entry.text / tool_calls / model_ref / stop_reason / total_tokens / cost / duration_ms / timestamp / failed? / error_message
-conversation.parent / parent_at          # from record["parent"]
+conversation.live / busy? / streaming_message / running_tools / inbox / last_failure
+conversation.model / total_tokens / total_cost / usage_by_model
+conversation.parent / parent_at
+entry.text / tool_calls / model_ref / stop_reason / total_tokens / cost
+entry.duration_ms / timestamp / failed? / error_message
 
-DurableAgent::Connection.new("openai").connected? / start_login / complete_login(id, url) / disconnect</code></pre>
+<span class="hl-n">DurableAgent::Connection</span>.new(<span class="hl-s">&quot;openai&quot;</span>).connected? / start_login / complete_login(id, url) / disconnect</code></pre>
     <p class="prose">Every model is <code>readonly?</code>. Ids are pi's. Records stay JSON text (<code>attribute :record, :json</code>). <code>kind</code>, <code>data</code>, <code>model</code> live in the record, so kind filters run in Ruby and return arrays.</p>
     <div class="grid-2">
       <div>
@@ -572,22 +577,24 @@ DurableAgent::Connection.new("openai").connected? / start_login / complete_login
       <div><div class="n">1</div><div class="l">extra process</div></div>
       <div><div class="n">1</div><div class="l">database</div></div>
     </div>
-<pre><code>durable_agent/
-  lib/durable_agent.rb                       configure, config, client, start, conversation, auth
-  lib/durable_agent/configuration.rb         defaults, callbacks, token chain
-  lib/durable_agent/client.rb                Net::HTTP; Error, Busy, UnknownModel, Unavailable
-  lib/durable_agent/tool.rb                  description, param, replay, coercion
-  lib/durable_agent/current.rb               conversation_id, call_id during a tool call
-  lib/durable_agent/sidecar.rb               env and DATABASE_URL from Rails config, exec
-  lib/durable_agent/message_text.rb          text and tool calls out of pi messages
-  lib/durable_agent/indexed_string.rb        JSON.stringify-compatible encoding
-  lib/durable_agent/test_helper.rb           stub_sidecar, fake_sidecar
-  lib/generators/durable_agent/install/      migration, initializer
-  app/models/durable_agent/                  conversation, entry, task, submission, document, revision, report, connection
-  app/controllers/durable_agent/             tools_controller, events_controller (bearer)
-  sidecar/src/                               main, config, harness, storage, documents, events, server, auth, credentials, settings, reports, tools
-  sidecar/src/db/                            index, sqlite, postgres, translate
-  sidecar/dist/sidecar.js                    one ~3 MB esbuild bundle, Node ≥ 22.19</code></pre>
+<pre><code class="lang-tree"><span class="hl-n">durable_agent/</span>
+  <span class="hl-n">lib/durable_agent.rb</span>                   <span class="hl-c">configure, config, client, start, conversation, auth</span>
+  <span class="hl-n">lib/durable_agent/configuration.rb</span>     <span class="hl-c">defaults, callbacks, token chain</span>
+  <span class="hl-n">lib/durable_agent/client.rb</span>            <span class="hl-c">Net::HTTP; Error, Busy, UnknownModel, Unavailable</span>
+  <span class="hl-n">lib/durable_agent/tool.rb</span>              <span class="hl-c">description, param, replay, coercion</span>
+  <span class="hl-n">lib/durable_agent/current.rb</span>           <span class="hl-c">conversation_id, call_id during a tool call</span>
+  <span class="hl-n">lib/durable_agent/sidecar.rb</span>           <span class="hl-c">env and DATABASE_URL from Rails config, exec</span>
+  <span class="hl-n">lib/durable_agent/message_text.rb</span>      <span class="hl-c">text and tool calls out of pi messages</span>
+  <span class="hl-n">lib/durable_agent/indexed_string.rb</span>    <span class="hl-c">JSON.stringify-compatible encoding</span>
+  <span class="hl-n">lib/durable_agent/test_helper.rb</span>       <span class="hl-c">stub_sidecar, fake_sidecar</span>
+  <span class="hl-n">lib/generators/durable_agent/install/</span>  <span class="hl-c">migration, initializer</span>
+  <span class="hl-n">app/models/durable_agent/</span>              <span class="hl-c">conversation, entry, task, submission, document,</span>
+                                         <span class="hl-c">revision, report, connection</span>
+  <span class="hl-n">app/controllers/durable_agent/</span>         <span class="hl-c">tools_controller, events_controller (bearer)</span>
+  <span class="hl-n">sidecar/src/</span>                           <span class="hl-c">main, config, harness, storage, documents, events,</span>
+                                         <span class="hl-c">server, auth, credentials, settings, reports, tools</span>
+  <span class="hl-n">sidecar/src/db/</span>                        <span class="hl-c">index, sqlite, postgres, translate</span>
+  <span class="hl-n">sidecar/dist/sidecar.js</span>                <span class="hl-c">one ~3 MB esbuild bundle, Node &gt;= 22.19</span></code></pre>
     <div class="callout">
       <p><strong>Distribution.</strong> <code>rake build</code> runs <code>npm ci</code> and esbuild and ships one file, no <code>node_modules</code>. <code>DurableAgent::Sidecar.command</code> is the place to swap in a binary later.</p>
     </div>
@@ -596,8 +603,8 @@ DurableAgent::Connection.new("openai").connected? / start_login / complete_login
   <section>
     <h2>Out of scope</h2>
     <ul class="prose">
-      <li><strong>Per-user credentials.</strong> One set per app.</li>
-      <li><strong>More than one sidecar.</strong> One per app and database.</li>
+      <li><strong>Per-user provider accounts.</strong> The app signs in to OpenAI or Anthropic once; every user's conversations run on that account. Users are the app's concern.</li>
+      <li><strong>More than one sidecar.</strong> One process per app and database serves every user.</li>
       <li><strong>Compaction, reset, task graph, SSE routes.</strong> pi-durable has them; no need yet.</li>
       <li><strong>Forked conversations' inherited entries.</strong> <code>entries</code> are a conversation's own rows.</li>
       <li><strong>A Ruby port of chord deltas.</strong> The base wrapper makes it unnecessary.</li>
