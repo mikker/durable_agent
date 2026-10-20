@@ -33,6 +33,26 @@ failed_agent:
   created_at: 1
   record: <%= json.({ id: 900506, kind: "pi.agent", scope: { kind: "conversation", conversationId: 900003 }, history: "rewindable", fork: "copy", createdAt: 1 }) %>
 
+errored_agent:
+  id: 900507
+  kind: <%= DurableAgent::IndexedString.encode("pi.agent").to_json %>
+  family: 0
+  key_value: <%= DurableAgent::IndexedString.encode("").to_json %>
+  scope_kind: conversation
+  owner_id: 900006
+  created_at: 1
+  record: <%= json.({ id: 900507, kind: "pi.agent", scope: { kind: "conversation", conversationId: 900006 }, history: "rewindable", fork: "copy", createdAt: 1 }) %>
+
+idle_usage:
+  id: 900508
+  kind: <%= DurableAgent::IndexedString.encode("pi.usage").to_json %>
+  family: 0
+  key_value: <%= DurableAgent::IndexedString.encode("").to_json %>
+  scope_kind: conversation
+  owner_id: 900001
+  created_at: 1
+  record: <%= json.({ id: 900508, kind: "pi.usage", scope: { kind: "conversation", conversationId: 900001 }, history: "latest", fork: "copy", createdAt: 1 }) %>
+
 busy_live:
   id: 900503
   kind: <%= DurableAgent::IndexedString.encode("pi.live").to_json %>

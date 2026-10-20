@@ -43,7 +43,29 @@ answer:
   commit_seq: 5
   created_at: <%= 1.hour.ago.to_fs(:db) %>
   record: <%= json.({ id: 900104, conversationId: 900001, kind: "pi.assistant", data: { usage: { total: 12 } },
-    model: [ { role: "assistant", content: [ { type: "text", text: "INV-1 totals 42." } ] } ] }) %>
+    model: [ { role: "assistant", content: [ { type: "text", text: "INV-1 totals 42." } ], api: "openai-responses",
+      provider: "openai", model: "gpt-6.1-sol", stopReason: "stop", durationMs: 2345, timestamp: 1792477600000,
+      usage: { input: 1000, output: 300, cacheRead: 0, cacheWrite: 0, totalTokens: 1300,
+        cost: { input: 0.008, output: 0.002, cacheRead: 0, cacheWrite: 0, total: 0.01 } } } ] }) %>
+
+errored_question:
+  id: 900310
+  conversation_id: 900006
+  commit_seq: 11
+  created_at: <%= 3.days.ago.to_fs(:db) %>
+  record: <%= json.({ id: 900310, conversationId: 900006, kind: "pi.user",
+    model: [ { role: "user", content: "you up?", timestamp: 1792477617373 } ] }) %>
+
+errored_answer:
+  id: 900311
+  conversation_id: 900006
+  commit_seq: 12
+  created_at: <%= 3.days.ago.to_fs(:db) %>
+  record: <%= json.({ id: 900311, conversationId: 900006, kind: "pi.assistant",
+    model: [ { role: "assistant", content: [], api: "openai-responses", provider: "openai", model: "gpt-6.1-sol",
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      stopReason: "error", errorMessage: "OAuth refresh failed for openai: OpenAI OAuth token request failed (400): {\n  \"error\": \"invalid_grant\"\n}",
+      timestamp: 1792477617389, durationMs: 671 } ] }) %>
 
 busy_question:
   id: 900201

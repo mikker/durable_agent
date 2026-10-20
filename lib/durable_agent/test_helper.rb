@@ -8,7 +8,8 @@ module DurableAgent
   #   end
   #
   # `stub_sidecar` replaces DurableAgent.client calls with canned responses or callables and records each call.
-  # `fake_sidecar` goes further for the three commands that write: like the real sidecar, it commits the
+  # It also seals the client: every other call raises DurableAgent::Unavailable, so a test never reaches a sidecar
+  # that happens to be running. `fake_sidecar` goes further for the three commands that write: like the real sidecar, it commits the
   # conversation or submission row before it answers, so `DurableAgent.start` and `conversation.say` find them.
   #
   #   fake_sidecar
@@ -21,6 +22,9 @@ module DurableAgent
 
     # Ids the fake hands out: above the ids pi-durable starts from, and above the gem's own test fixtures.
     FAKE_IDS_FROM = 950_000
+
+    # The client's calls to the sidecar; `url` and `token` are configuration.
+    SIDECAR_CALLS = DurableAgent::Client.public_instance_methods(false) - %i[ url token ]
 
     #   stub_sidecar(auth: CONNECTED, submit: ->(id, content, **) { { "id" => 1 } }, abort: DurableAgent::Unavailable)
     def stub_sidecar(**responses)
@@ -37,6 +41,14 @@ module DurableAgent
           else
             response.respond_to?(:call) ? response.call(*args, **kwargs) : response
           end
+        end
+      end
+
+      (SIDECAR_CALLS - @sidecar_stubbed).each do |name|
+        @sidecar_stubbed << name
+        client.define_singleton_method(name) do |*args, **kwargs|
+          calls << [ name, args, kwargs ]
+          raise DurableAgent::Unavailable.new(nil, nil, "DurableAgent.client.#{name} is not stubbed; stub_sidecar(#{name}: ...)")
         end
       end
     end

@@ -39,6 +39,37 @@ class DurableAgent::EntryTest < ActiveSupport::TestCase
     assert_includes durable_agent_entries(:tool_result).text, "INV-1"
   end
 
+  test "message metadata: model, stop reason, tokens, cost, timing" do
+    answer = durable_agent_entries(:answer)
+
+    assert_equal [ "openai", "gpt-6.1-sol", "openai/gpt-6.1-sol" ], [ answer.provider, answer.model_id, answer.model_ref ]
+    assert_equal "stop", answer.stop_reason
+    assert_equal 1300, answer.total_tokens
+    assert_in_delta 0.01, answer.cost
+    assert_equal 2345, answer.duration_ms
+    assert_equal Time.zone.at(1792477600), answer.timestamp
+    assert answer.answer?
+    assert_not answer.failed?
+
+    question = durable_agent_entries(:question)
+    assert_nil question.model_ref
+    assert_nil question.timestamp
+    assert_equal({}, question.usage)
+    assert_nil question.total_tokens
+  end
+
+  test "a failed assistant entry carries the error and is not an answer" do
+    failed = durable_agent_entries(:errored_answer)
+
+    assert failed.failed?
+    assert_not failed.answer?
+    assert_equal "error", failed.stop_reason
+    assert_match "invalid_grant", failed.error_message
+    assert_equal "", failed.text
+    assert_equal 671, failed.duration_ms
+    assert_not durable_agent_entries(:question).failed?, "only assistant entries fail"
+  end
+
   test "kind predicates" do
     assert durable_agent_entries(:question).user?
     assert durable_agent_entries(:answer).assistant?

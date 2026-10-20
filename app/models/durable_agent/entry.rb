@@ -35,4 +35,22 @@ class DurableAgent::Entry < DurableAgent::ApplicationRecord
 
   def tool_name = messages.first&.dig("toolName")
   def error? = messages.any? { |message| message["isError"] }
+
+  # What pi-ai records on each message: the model that answered, how it stopped, tokens, timing.
+  def message = messages.first || {}
+  def provider = message["provider"]
+  def model_id = message["model"] # not model_name, which is Active Model's
+  def model_ref = ("#{provider}/#{model_id}" if provider && model_id)
+  def stop_reason = message["stopReason"] # "stop", "length", "toolUse", "aborted", "error"
+  def error_message = message["errorMessage"]
+  def usage = message["usage"] || {}
+  def total_tokens = usage["totalTokens"]
+  def cost = usage.dig("cost", "total")
+  def duration_ms = message["durationMs"]
+  def timestamp = (Time.zone.at(message["timestamp"] / 1000.0) if message["timestamp"])
+
+  # An assistant entry the model request ended in an error or an abort: it carries no answer, and the input it was
+  # for settles unanswered.
+  def failed? = assistant? && stop_reason.in?(%w[ error aborted ])
+  def answer? = assistant? && !failed?
 end

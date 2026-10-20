@@ -57,6 +57,12 @@ conversation.streaming_message
 conversation.running_tools
 conversation.inbox
 conversation.last_failure    # the newest unanswered input, with #explanation
+conversation.model           # "openai/gpt-6.1-sol", pinned when the conversation started
+conversation.total_tokens / total_cost / usage_by_model   # from pi.usage, over the whole conversation
+
+entry.text / tool_calls / tool_name / error?
+entry.model_ref / stop_reason / total_tokens / cost / duration_ms / timestamp   # what pi-ai recorded on the message
+entry.failed?                # an assistant entry that ended in an error or abort: no answer, and error_message
 ```
 
 `say` is idempotent on `request_id`: retrying with the same id returns the same submission. It returns the
@@ -317,7 +323,8 @@ end
 conversation or the queued submission row first, then answers with its id, so `DurableAgent.start` and
 `conversation.say` find their rows inside the test's transaction. Submissions are idempotent on `request_id`, and
 an unknown conversation raises the sidecar's 404. `stub_sidecar` replaces any client call with a value, a
-callable or an exception; both record calls in `sidecar_calls`.
+callable or an exception; both record calls in `sidecar_calls`. Once stubbed, the client is sealed: a call the
+test did not stub raises `DurableAgent::Unavailable` instead of reaching a sidecar that happens to be running.
 
 ```ruby
 test "sending a message" do

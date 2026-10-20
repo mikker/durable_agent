@@ -36,13 +36,14 @@ class DurableAgent::SubmissionTest < ActiveSupport::TestCase
     assert_equal durable_agent_entries(:question), answered.entry
     assert_equal durable_agent_entries(:answer), answered.answer
     assert_equal [ "run_failed", { "message" => "429" } ], [ failed.reason, failed.detail ]
-    assert_equal "The model request failed.", failed.explanation
+    assert_equal "The run failed. 429", failed.explanation
+    assert_equal "429", failed.detail_text
     assert_nil durable_agent_submissions(:placed).answer
   end
 
   test "status scopes and predicates" do
     assert_equal [ durable_agent_submissions(:placed) ], DurableAgent::Submission.pending.to_a
-    assert_equal 4, DurableAgent::Submission.settled.count
+    assert_equal 5, DurableAgent::Submission.settled.count
     assert durable_agent_submissions(:placed).pending?
     assert durable_agent_submissions(:answered).done?
     assert durable_agent_submissions(:unanswered).unanswered?
@@ -56,6 +57,13 @@ class DurableAgent::SubmissionTest < ActiveSupport::TestCase
 
     without_model = DurableAgent::Submission.new(record: { "reason" => "no_model" })
     assert_equal "No model could run: the conversation has none, or the sidecar does not know its model id.", without_model.explanation
+  end
+
+  test "model_error carries the provider's message" do
+    submission = durable_agent_submissions(:model_error)
+    assert_equal "model_error", submission.reason
+    assert_match(/\AThe model returned an error\. OAuth refresh failed for openai/, submission.explanation)
+    assert_equal "The model returned an error.", DurableAgent::Submission.new(record: { "reason" => "model_error" }).explanation
   end
 
   test "unknown reasons are explained generically" do

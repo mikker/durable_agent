@@ -42,7 +42,7 @@ class DurableAgent::ConversationTest < ActiveSupport::TestCase
   test "documents are the conversation's current ones" do
     idle = durable_agent_conversations(:idle)
 
-    assert_equal [ durable_agent_documents(:idle_live) ], idle.documents.to_a
+    assert_equal [ durable_agent_documents(:idle_live), durable_agent_documents(:idle_usage) ], idle.documents.order(:id).to_a
     assert_equal [], idle.inbox, "the retired pi.inbox incarnation is not read"
     assert_equal({}, idle.document("pi.agent"))
   end
@@ -53,6 +53,28 @@ class DurableAgent::ConversationTest < ActiveSupport::TestCase
     assert_match "Model faux/faux-1 is not available", failure.explanation
 
     assert_nil durable_agent_conversations(:idle).last_failure
+  end
+
+  test "last failure looks past an assistant entry that ended in an error" do
+    errored = durable_agent_conversations(:errored)
+
+    assert_equal durable_agent_submissions(:model_error), errored.last_failure
+    assert_equal "The model returned an error. OAuth refresh failed for openai: OpenAI OAuth token request failed (400): {\n  \"error\": \"invalid_grant\"\n}",
+      errored.last_failure.explanation
+    assert_equal "openai/gpt-6.1-sol", errored.model
+  end
+
+  test "usage totals come from the pi.usage document" do
+    idle = durable_agent_conversations(:idle)
+
+    assert_equal %w[ openai/gpt-6.1-sol openai/gpt-6-sol ], idle.usage_by_model.keys
+    assert_equal 3100, idle.total_tokens
+    assert_in_delta 0.02, idle.total_cost
+    assert_equal({ "lookup_invoice" => { "calls" => 1 } }, idle.usage["tools"])
+
+    assert_equal({}, durable_agent_conversations(:busy).usage)
+    assert_equal 0, durable_agent_conversations(:busy).total_tokens
+    assert_equal 0, durable_agent_conversations(:busy).total_cost
   end
 
   test "last failure with no answer yet is any unanswered input" do

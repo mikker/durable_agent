@@ -67,14 +67,21 @@ class DurableAgent::Conversation < DurableAgent::ApplicationRecord
     entries.chronologically.visible
   end
 
-  # The newest input that settled without an answer, if it is more recent than the last answer.
+  # The newest input that settled without an answer, if it is more recent than the last answer. An assistant
+  # entry that ended in an error or an abort is not an answer.
   def last_failure
     failure = submissions.unanswered.reverse_chronologically.first
     return unless failure
 
-    last_answer = entries.reverse_chronologically.of_kind("pi.assistant").first
+    last_answer = entries.reverse_chronologically.of_kind("pi.assistant").find(&:answer?)
     failure if last_answer.nil? || failure.entry_id.to_i > last_answer.id
   end
+
+  # pi.usage: tokens and cost per model over the whole conversation, and per tool.
+  def usage = document("pi.usage")
+  def usage_by_model = usage.fetch("models", {})
+  def total_tokens = usage_by_model.values.sum { |model| model["totalTokens"].to_i }
+  def total_cost = usage_by_model.values.sum { |model| model.dig("cost", "total").to_f }
 
   # The sidecar commits the submission before it answers, so the row is there to find.
   # Both clear the query cache, so busy?, live and transcript read what the sidecar committed.

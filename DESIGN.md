@@ -425,6 +425,9 @@ conversation.abort
 conversation.transcript                              # Array of visible entries, oldest first
 conversation.entries / submissions / tasks / reports / documents
 conversation.document("pi.live") / live / busy? / streaming_message / running_tools / inbox / last_failure
+conversation.model / agent / usage / usage_by_model / total_tokens / total_cost   # pi.agent and pi.usage
+entry.message / provider / model_id / model_ref / stop_reason / error_message / usage / total_tokens / cost / duration_ms / timestamp
+entry.failed? / answer?                              # an assistant entry whose request ended in an error or abort is no answer
 conversation.parent / parent_at                      # from record["parent"]: the parent Conversation and the Entry it forked at
 conversation.created_at / last_activity_at           # the row's insert time; the newest entry's created_at, else created_at
 DurableAgent::Conversation.root / top_level          # the root the sidecar creates at boot (id 1); the others no task owns
@@ -448,7 +451,9 @@ conversation remains, unreferenced.
   conversation's inherited entries are not followed); `documents` is `Document.current.where(scope_kind:
   "conversation", owner_id: id)`; `document(kind)` returns that document's `value` or `{}`. `say` returns
   `submissions.find(response["id"])`. `last_failure` is the newest `unanswered` submission whose `entry_id` is
-  greater than the id of the newest `pi.assistant` entry, or any unanswered one when there is no answer yet.
+  greater than the id of the newest `pi.assistant` entry that is an answer (`stopReason` neither `error` nor
+  `aborted`), or any unanswered one when there is no answer yet. `model` is `"provider/modelId"` from the
+  `pi.agent` document; `usage`, `usage_by_model`, `total_tokens`, `total_cost` read `pi.usage`.
 - `Entry`: `attribute :record, :json`; `kind`, `data`, `model`, `head`, `by_task_id` come from the record (there
   are no such columns); `created_at` is a column. Scopes `chronologically` / `reverse_chronologically` on id. `HIDDEN_KINDS =
   %w[pi.system pi.reset]`, `visible?`, `user?`, `assistant?`, `tool_result?`, `compaction?`, `messages`, `text`,

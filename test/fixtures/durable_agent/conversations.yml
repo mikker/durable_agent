@@ -25,6 +25,12 @@ forked:
   record: <%= json.({ id: 900004, parent: { conversationId: 900001, at: 900102 } }) %>
   created_at: <%= 1.day.ago.to_fs(:db) %>
 
+# A real-provider conversation whose last request errored: the model answered with stopReason "error".
+errored:
+  id: 900006
+  record: <%= json.({ id: 900006 }) %>
+  created_at: <%= 3.days.ago.to_fs(:db) %>
+
 owned:
   id: 900005
   owner_conversation_id: 900002

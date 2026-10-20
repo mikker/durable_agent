@@ -533,6 +533,8 @@ conversation.abort
 conversation.transcript                  # visible entries, oldest first (an Array)
 conversation.entries / submissions / tasks / reports / documents
 conversation.document("pi.live") / live / busy? / streaming_message / running_tools / inbox / last_failure
+conversation.model / total_tokens / total_cost / usage_by_model   # pi.agent and pi.usage
+entry.text / tool_calls / model_ref / stop_reason / total_tokens / cost / duration_ms / timestamp / failed? / error_message
 conversation.parent / parent_at          # from record["parent"]
 
 DurableAgent::Connection.new("openai").connected? / start_login / complete_login(id, url) / disconnect</code></pre>
@@ -638,6 +640,7 @@ DurableAgent::Connection.new("openai").connected? / start_login / complete_login
       <li><strong>A report raised while the Harness is closing is lost.</strong> Closing the Harness closes the database; reports in flight before that are awaited, one raised during the close itself cannot be stored.</li>
       <li><strong>Refresh broadcasts arrive up to every 100 ms per streaming conversation.</strong> The event debounce bounds the rate; the page refresh is not debounced further.</li>
       <li><strong>pi-durable 1.3.0 reports carry no conversation.</strong> They land on the <code>durable_agent:reports</code> stream rather than a conversation's.</li>
+      <li><strong>A revoked OAuth credential reads as connected until a run fails.</strong> The auth status only checks that a credential is stored; a refresh token revoked elsewhere (OpenAI rotates them, so one grant cannot serve two installations) surfaces as a <code>model_error</code> on the next message, which the transcript shows.</li>
       <li><strong>Smaller ones.</strong> Demodulized tool names can collide; very long request ids or document keys could exceed Postgres index entry limits; <code>sslmode=prefer</code> and <code>allow</code> pass through to node unchanged, where they mean full verification; a role on Postgres 15+ needs <code>CREATE</code> on the schema for pi-durable's one <code>CREATE TABLE IF NOT EXISTS</code>; the 30 s shutdown deadline and the uncaught-exception exit are not covered by tests.</li>
     </ul>
   </section>

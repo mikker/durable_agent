@@ -23,6 +23,25 @@ failed_agent_base:
   version: 1
   content: <%= json.({ model: { provider: "faux", modelId: "faux-1" } }) %>
 
+errored_agent_base:
+  document_id: 900507
+  seq: 2
+  kind: base
+  version: 1
+  content: <%= json.({ model: { provider: "openai", modelId: "gpt-6.1-sol" } }) %>
+
+idle_usage_base:
+  document_id: 900508
+  seq: 5
+  kind: base
+  version: 3
+  content: <%= json.({ models: {
+    "openai/gpt-6.1-sol" => { input: 1800, output: 500, cacheRead: 200, cacheWrite: 0, totalTokens: 2500,
+      cost: { input: 0.0144, output: 0.0035, cacheRead: 0.0004, cacheWrite: 0, total: 0.0183 } },
+    "openai/gpt-6-sol" => { input: 500, output: 100, cacheRead: 0, cacheWrite: 0, totalTokens: 600,
+      cost: { input: 0.001, output: 0.0007, cacheRead: 0, cacheWrite: 0, total: 0.0017 } } },
+    tools: { lookup_invoice: { calls: 1 } } }) %>
+
 busy_live_base:
   document_id: 900503
   seq: 6

@@ -12,6 +12,15 @@ class DurableAgent::TestHelperTest < ActiveSupport::TestCase
     assert_equal [ [ :submit, [ 7, "Hi" ], { request_id: 1 } ] ], sidecar_calls(:submit)
   end
 
+  test "stub_sidecar seals the client: calls it was not given raise Unavailable instead of reaching a sidecar" do
+    stub_sidecar(auth: CONNECTED)
+
+    error = assert_raises(DurableAgent::Unavailable) { DurableAgent.client.health }
+    assert_match "health is not stubbed", error.message
+    assert_equal [ [ :health, [], {} ] ], sidecar_calls(:health)
+    assert_equal CONNECTED, DurableAgent.client.auth
+  end
+
   test "stub_sidecar refuses methods the client does not have" do
     assert_raises(ArgumentError) { stub_sidecar(nope: 1) }
   end
